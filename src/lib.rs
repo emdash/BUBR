@@ -26,34 +26,30 @@
 // always link to.
 
 
-use core::fmt::Debug;
-
-
 // Graphs are self-referential structures.
 //
 // We use this newtype to represent the internal references.
-pub struct Ref(u32);
+pub struct Ref(usize);
 
 
 pub trait Value: Sized + Clone {}
 
+enum Relation {LambdaBody, AppFunc, AppArg}
 
-pub enum Node<T: Value> {
+pub struct UpLink(Ref, Relation);
+
+pub enum NodeType<T: Value> {
     Const  {value: T},
     VarRef {name: String},
     Lambda {var: Ref, body: Ref},
-    App    {f: Ref, x: Ref, cache: Option<Ref>},
+    App    {f: Ref, x: Ref}
 }
 
-
-enum Relation {
-    LambdaBody,
-    AppFunc,
-    AppArg,
+pub struct Node<T: Value> {
+    ty: NodeType<T>,
+    cache: Option<Ref>,
+    uplinks: Vec<UpLink>
 }
-
-
-pub struct UpLink(Ref, Relation);
 
 
 pub struct TermGraph<T: Value> {
@@ -70,7 +66,21 @@ impl<T: Value> TermGraph<T> {
         }
     }
 
-    pub fn fromTree
+    fn get_mut(&mut self, n: Ref, callback: impl FnOnce(&mut Node<T>) -> ()) {
+        callback(&mut self.nodes[n.0]);
+    }
+
+    fn get(&self, n: Ref, callback: impl FnOnce(&Node<T>) -> ()) {
+        callback(&self.nodes[n.0]);
+    }
+
+    pub fn upcopy(&mut self, oldchild: Ref, newchild: Ref) {
+        self.get_mut(oldchild, |node| {
+            node.cache = Some(newchild);
+
+            
+        });
+    }
 }
 
 
