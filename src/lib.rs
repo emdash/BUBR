@@ -26,19 +26,23 @@
 // always link to.
 
 
-use std::rc::Rc;
 use core::fmt::Debug;
 
 
-struct Addr(u32);
-struct Symbol(Rc<String>);
+// Graphs are self-referential structures.
+//
+// We use this newtype to represent the internal references.
+pub struct Ref(u32);
 
 
-enum Node<T: Debug + Clone> {
+pub trait Value: Sized + Clone {}
+
+
+pub enum Node<T: Value> {
     Const  {value: T},
     VarRef {name: String},
-    Lambda {var: Addr, body: Addr},
-    App    {f: Addr, x: Addr, cache: Option<Addr>},
+    Lambda {var: Ref, body: Ref},
+    App    {f: Ref, x: Ref, cache: Option<Ref>},
 }
 
 
@@ -49,17 +53,38 @@ enum Relation {
 }
 
 
-struct UpLink(Addr, Relation);
+pub struct UpLink(Ref, Relation);
 
 
-struct TermGraph<T: Debug + Clone> {
+pub struct TermGraph<T: Value> {
     nodes: Vec<Node<T>>,
     uplink: Vec<UpLink>,
 }
 
 
+impl<T: Value> TermGraph<T> {
+    pub fn new() -> Self {
+        TermGraph {
+            nodes: Vec::new(),
+            uplink: Vec::new()
+        }
+    }
+
+    pub fn fromTree
+}
+
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    impl Value for i32 {}
+    
+    #[test]
+    fn alloc() {
+        let x = TermGraph::<i32>::new();
+    }
+    
     #[test]
     fn it_works() {
         assert_eq!(2 + 2, 4);
