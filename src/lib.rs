@@ -29,13 +29,15 @@
 // Graphs are self-referential structures.
 //
 // We use this newtype to represent the internal references.
+#[derive(Copy, Clone, Debug)]
 pub struct Ref(usize);
-
 
 pub trait Value: Sized + Clone {}
 
+#[derive(Copy, Clone, Debug)]
 enum Relation {LambdaBody, AppFunc, AppArg}
 
+#[derive(Copy, Clone, Debug)]
 pub struct UpLink(Ref, Relation);
 
 pub enum NodeType<T: Value> {
@@ -50,7 +52,6 @@ pub struct Node<T: Value> {
     cache: Option<Ref>,
     uplinks: Vec<UpLink>
 }
-
 
 pub struct TermGraph<T: Value> {
     nodes: Vec<Node<T>>,
@@ -72,14 +73,6 @@ impl<T: Value> TermGraph<T> {
 
     fn get(&self, n: Ref, callback: impl FnOnce(&Node<T>) -> ()) {
         callback(&self.nodes[n.0]);
-    }
-
-    pub fn upcopy(&mut self, oldchild: Ref, newchild: Ref) {
-        self.get_mut(oldchild, |node| {
-            node.cache = Some(newchild);
-
-            
-        });
     }
 }
 
