@@ -86,6 +86,18 @@ struct LambdaType {
     uniq: i32
 }
 
+/**
+ * funcRef and argRef are similar to bodyRef above.
+ */
+struct AppType {
+    func: Option<Ref<Term>>,
+    arg: Option<Ref<Term>>,
+    funcRef: Option<Ref<DL<ChildCell>>>,
+    argRef: Option<Ref<DL<ChildCell>>>,
+    copy: Option<Ref<AppType>>,
+    parents: DL<ChildCell>
+}
+
 struct VarType {}
 struct ChildCell {}
 struct Term {}
