@@ -26,57 +26,71 @@
 // always link to.
 
 
-// Graphs are self-referential structures.
-//
-// We use this newtype to represent the internal references.
-#[derive(Copy, Clone, Debug)]
-pub struct Ref(usize);
+/**
+ * What follows is a port of the SML code listing in the PDF.
+ *
+ * - Each record becomes a struct
+ * - Except when it is a variant, it becomes an enum
+ * - ChildCell becomes RefCell
+ * - We use Vec instead of LinkedList, because this collection
+ *   doesn't support insert into the middle.
+ *
+ * Top-level functions on each type get moved into impl blocks.
+ */
 
-pub trait Value: Sized + Clone {}
+use core::marker::PhantomData;
 
-#[derive(Copy, Clone, Debug)]
-enum Relation {LambdaBody, AppFunc, AppArg}
+/**
+ * Another key difference is that we allocate a single vector to store
+ * all elements. We simulate pointers via usize indexing into this
+ * vector. This is mainly to appease the borrow checker.
+ *
+ * To recover a modicum of type safety, we use PhantomData to mark the
+ * ref.
+ */
+struct Ref<T>(u32, PhantomData<T>);
 
-#[derive(Copy, Clone, Debug)]
-pub struct UpLink(Ref, Relation);
-
-pub enum NodeType<T: Value> {
-    Const  {value: T},
-    VarRef {name: String},
-    Lambda {var: Ref, body: Ref},
-    App    {f: Ref, x: Ref}
-}
-
-pub struct Node<T: Value> {
-    ty: NodeType<T>,
-    cache: Option<Ref>,
-    uplinks: Vec<UpLink>
-}
-
-pub struct TermGraph<T: Value> {
-    nodes: Vec<Node<T>>,
-    uplink: Vec<UpLink>,
-}
-
-
-impl<T: Value> TermGraph<T> {
-    pub fn new() -> Self {
-        TermGraph {
-            nodes: Vec::new(),
-            uplink: Vec::new()
-        }
+impl<T> Ref<T> {
+    pub fn deref<'a>(&self, data: &'a Vec<T>) -> &'a T {
+        return &data[self.0 as usize];
     }
 
-    fn get_mut(&mut self, n: Ref, callback: impl FnOnce(&mut Node<T>) -> ()) {
-        callback(&mut self.nodes[n.0]);
+    pub fn deref_mut<'a>(&self, data: &'a mut Vec<T>) -> &'a mut T {
+        return &mut data[self.0 as usize];
     }
+}
+    
 
-    fn get(&self, n: Ref, callback: impl FnOnce(&Node<T>) -> ()) {
-        callback(&self.nodes[n.0]);
-    }
+/**
+ * We need our own linked list that actually exposes its internals.
+ */
+struct DL<T: Sized> {
+    data: T,
+    left: Ref<DL<T>>,
+    right: Ref<DL<T>>
 }
 
 
+/**
+ * There are three kinds of nodes: lambdas, var refs, and
+ * applications. Each kind gets its own struct, so that we can encode
+ * more structure in Rust's type system, which mirrors MLs
+ */
+struct LambdaType {
+    var: VarType,
+    body: Option<Ref<Term>>,
+    // The parent ref beloinging to our child node (our body) that
+    // points back to us.
+    bodyRef: Option<Ref<DL<ChildCell>>>,
+    parents: Ref<DL<ChildCell>>,
+    uniq: i32
+}
+
+struct VarType {}
+struct ChildCell {}
+struct Term {}
+
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,3 +107,4 @@ mod tests {
         assert_eq!(2 + 2, 4);
     }
 }
+*/

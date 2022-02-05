@@ -1,5 +1,5 @@
 [package]
-name = "shivers"
+name = "bubr-rust"
 version = "0.1.0"
 authors = ["brandon <dotsony@gmail.com>"]
 edition = "2018"
