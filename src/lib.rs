@@ -24,140 +24,155 @@
 // 
 // Fork this project to create your own MIT license that you can
 // always link to.
-use core::marker::PhantomData;
+use std::collections::{HashMap};
 
 
 /**
- * What follows is a straight port of the SML code listing in the
- * PDF. Not attempting to take full advantage of Rust until better I
- * understand how this works.
+ * What follows is a hairbrained re-inrerpretation of both the SML
+ * code listing and the formal algorithm presented in the PDF. 
  *
- * - Each record becomes a struct
- * - Except when it is a variant, it becomes an enum
- * - ChildCell becomes RefCell
- * - We use Vec instead of LinkedList, because this collection
- *   doesn't support insert into the middle.
+ * The algorithm, as presented, would be easier to implement in C/C++
+ * or Java, or the unsafe subset of Rust.
  *
- * Top-level functions on each type get moved into impl blocks.
+ * I gave up trying to circumvent the borrow checker. Instead I take a
+ * more graph-theoretic approach.
  */
 
-/**
- * One key difference is that we use vectors for storage, and simulate
- * pointers via indexing. This is mainly to appease the borrow
- * checker, because we are working with doubly-linked lists.
- *
- * To recover a modicum of type safety, we use PhantomData to tag the
- * ref with its expected type.
- */
-#[derive(Copy, Clone, Debug)]
-struct Ref<T>(u32, PhantomData<T>);
+ 
+#[derive(Clone, Debug)]
+enum TermTree {
+    Lambda {
+        arg: String,
+        body: Box<TermTree>,
+    },
 
+    Var {
+        name: String,
+    },
 
-impl<T> Ref<T> {
-    pub fn deref<'a>(&self, data: &'a Vec<T>) -> &'a T {
-        return &data[self.0 as usize];
-    }
-
-    pub fn deref_mut<'a>(&self, data: &'a mut Vec<T>) -> &'a mut T {
-        return &mut data[self.0 as usize];
+    App {
+        func: Box<TermTree>,
+        arg: Box<TermTree>
     }
 }
-    
+
 
 /**
- * We need our own linked list that actually exposes its internals,
- * since that's how the SML is written.
+ * This is the flat format we produce and consume
  */
 #[derive(Clone, Debug)]
-struct DL<T: Sized> {
-    data: Ref<T>,
-    left: Ref<DL<T>>,
-    right: Ref<DL<T>>
+enum Token {
+    Id(String),
+    Lambda,
+    /*
+    Open,
+    Close,*/
+}
+
+
+#[derive(Clone, Debug)]
+enum ParseState {
+    Start,
+    LambdaArg,
+    LambdaBody(String),
+    AppFunc(Box<TermTree>),
+    Accept(Box<TermTree>),
+    SubExpr(Box<ParseState>, Box<ParseState>),
+    Unexpected(Token),
+}
+
+
+impl TermTree {
+    pub fn lambda(arg: &str, body: Box<TermTree>) -> Box<TermTree> {
+        Box::new(TermTree::Lambda {arg: arg.to_string(), body})
+    }
+
+    pub fn var(name: &str) -> Box<TermTree> {
+        Box::new(TermTree::Var {name: name.to_string()})
+    }
+
+    pub fn app(func: Box<TermTree>, arg: Box<TermTree>) -> Box<TermTree> {
+        Box::new(TermTree::App {func, arg})
+    }
+
+    pub fn parse(input: &[Token]) -> Option<Box<TermTree>> {
+        type S = ParseState;
+
+        let mut state = S::Start;
+
+        for token in input {
+            match Self::dispatch(state, &token) {
+                S::Accept(tt) => {return Some(tt);},
+                s             => {state = s;}
+            }
+        }
+
+        None
+    }
+
+    pub fn dispatch(state: ParseState, token: &Token) -> ParseState {
+        type S = ParseState;
+        type T  = Token;
+
+        match (state, token) {
+            (S::Start,          T::Id(v))  => S::AppFunc(Self::var(v)),
+
+            (S::AppFunc(f),     T::Id(v))  => S::Accept(Self::app(f, Self::var(v))),
+
+            (S::LambdaArg,      T::Id(v))  => S::LambdaBody(v.to_string()),
+
+            (S::LambdaBody(a),  T::Id(v))  => S::Accept(Self::lambda(&a, Self::var(v))),
+            (s,  T::Lambda)                => S::SubExpr(Box::new(s), Box::new(S::LambdaArg)),
+
+            // Catch-all for unexpected cases.
+            (_, t) => S::Unexpected(t.clone()),
+        }
+    }
 }
 
 
 /**
  * There are three kinds of nodes: lambdas, var refs, and
- * applications. Each kind gets its own struct, so that we can encode
- * more structure in Rust's type system, which mirrors MLs
+ * applications. 
  */
-#[derive(Clone, Debug)]
-struct LambdaType {
-    var: VarType,
-    body: Option<Ref<Term>>,
-    // The parent ref beloinging to our child node (our body) that
-    // points back to us.
-    bodyRef: Option<Ref<DL<ChildCell>>>,
-    parents: Ref<DL<ChildCell>>,
-    uniq: i32
-}
-
-/**
- * funcRef and argRef are similar to bodyRef above.
- */
-#[derive(Clone, Debug)]
-struct AppType {
-    func:    Option<Ref<Term>>,
-    arg:     Option<Ref<Term>>,
-    funcRef: Option<Ref<DL<ChildCell>>>,
-    argRef:  Option<Ref<DL<ChildCell>>>,
-    copy:    Option<Ref<AppType>>,
-    parents: Ref<DL<ChildCell>>,
-    uniq:    i32
-}
-
-#[derive(Clone, Debug)]
-struct VarType {
-    name: String,
-    parents: Ref<DL<ChildCell>>,
-    uniq: i32
-}
-
-/**
- * Type of general LC node.
- */
-#[derive(Clone, Debug)]
 enum Term {
-    LambdaT(LambdaType),
-    AppT(AppType),
-    VarT(VarType)
+    Lambda,
+    VarRef(String),
+    App
+}
+
+
+
+/**
+ * These are the types of edges which can exist between two nodes.
+ */
+enum Relation {
+    AppFunc,
+    AppArg ,
+    LambdaBody
 }
 
 
 /**
- * This tells us what our relation to our parent is.
+ * So the whole graph is a set of nodes, and a set of edges, plus some
+ * extra book-keeping.
  */
-#[derive(Clone, Debug)]
-enum ChildCell {
-    AppFunc(AppType),
-    AppArg(AppType),
-    LambdaBody(LambdaType)
+struct TermGraph {
+    nodes: HashMap<u32, Term>,
+    relations: HashMap<(u32, u32), Relation>,
+    vars: HashMap<String, u32>
 }
 
 
-/**
- * This holds all our storage, and it's the type on which we implement
- * our top-level functions.
- */
-struct TG {
-    terms: Vec<Term>,
-    child_cells: Vec<ChildCell>,
-    dl_child_cell: Vec<DL<ChildCell>>
-}
-
-
-impl TG {
-    // XXX: this helper could be elimiminated with a different type
-    // structure.
-    fn termParRef(term: &Term) -> Ref<DL<ChildCell>> {
-        match term {
-            Term::LambdaT(lt) => lt.parents.clone(),
-            Term::AppT(at)    => at.parents.clone(),
-            Term::VarT(vt)    => vt.parents.clone(),
+impl TermGraph {
+    pub fn new() -> Self {
+        TermGraph {
+            nodes: HashMap::new(),
+            relations: HashMap::new(),
+            vars: HashMap::new()
         }
     }
 }
-
 
 
 /*
