@@ -24,10 +24,13 @@
 // 
 // Fork this project to create your own MIT license that you can
 // always link to.
+use core::marker::PhantomData;
 
 
 /**
- * What follows is a port of the SML code listing in the PDF.
+ * What follows is a straight port of the SML code listing in the
+ * PDF. Not attempting to take full advantage of Rust until better I
+ * understand how this works.
  *
  * - Each record becomes a struct
  * - Except when it is a variant, it becomes an enum
@@ -38,17 +41,17 @@
  * Top-level functions on each type get moved into impl blocks.
  */
 
-use core::marker::PhantomData;
-
 /**
- * Another key difference is that we allocate a single vector to store
- * all elements. We simulate pointers via usize indexing into this
- * vector. This is mainly to appease the borrow checker.
+ * One key difference is that we use vectors for storage, and simulate
+ * pointers via indexing. This is mainly to appease the borrow
+ * checker, because we are working with doubly-linked lists.
  *
- * To recover a modicum of type safety, we use PhantomData to mark the
- * ref.
+ * To recover a modicum of type safety, we use PhantomData to tag the
+ * ref with its expected type.
  */
+#[derive(Copy, Clone, Debug)]
 struct Ref<T>(u32, PhantomData<T>);
+
 
 impl<T> Ref<T> {
     pub fn deref<'a>(&self, data: &'a Vec<T>) -> &'a T {
@@ -62,10 +65,12 @@ impl<T> Ref<T> {
     
 
 /**
- * We need our own linked list that actually exposes its internals.
+ * We need our own linked list that actually exposes its internals,
+ * since that's how the SML is written.
  */
+#[derive(Clone, Debug)]
 struct DL<T: Sized> {
-    data: T,
+    data: Ref<T>,
     left: Ref<DL<T>>,
     right: Ref<DL<T>>
 }
@@ -76,6 +81,7 @@ struct DL<T: Sized> {
  * applications. Each kind gets its own struct, so that we can encode
  * more structure in Rust's type system, which mirrors MLs
  */
+#[derive(Clone, Debug)]
 struct LambdaType {
     var: VarType,
     body: Option<Ref<Term>>,
@@ -89,18 +95,70 @@ struct LambdaType {
 /**
  * funcRef and argRef are similar to bodyRef above.
  */
+#[derive(Clone, Debug)]
 struct AppType {
-    func: Option<Ref<Term>>,
-    arg: Option<Ref<Term>>,
+    func:    Option<Ref<Term>>,
+    arg:     Option<Ref<Term>>,
     funcRef: Option<Ref<DL<ChildCell>>>,
-    argRef: Option<Ref<DL<ChildCell>>>,
-    copy: Option<Ref<AppType>>,
-    parents: DL<ChildCell>
+    argRef:  Option<Ref<DL<ChildCell>>>,
+    copy:    Option<Ref<AppType>>,
+    parents: Ref<DL<ChildCell>>,
+    uniq:    i32
 }
 
-struct VarType {}
-struct ChildCell {}
-struct Term {}
+#[derive(Clone, Debug)]
+struct VarType {
+    name: String,
+    parents: Ref<DL<ChildCell>>,
+    uniq: i32
+}
+
+/**
+ * Type of general LC node.
+ */
+#[derive(Clone, Debug)]
+enum Term {
+    LambdaT(LambdaType),
+    AppT(AppType),
+    VarT(VarType)
+}
+
+
+/**
+ * This tells us what our relation to our parent is.
+ */
+#[derive(Clone, Debug)]
+enum ChildCell {
+    AppFunc(AppType),
+    AppArg(AppType),
+    LambdaBody(LambdaType)
+}
+
+
+/**
+ * This holds all our storage, and it's the type on which we implement
+ * our top-level functions.
+ */
+struct TG {
+    terms: Vec<Term>,
+    child_cells: Vec<ChildCell>,
+    dl_child_cell: Vec<DL<ChildCell>>
+}
+
+
+impl TG {
+    // XXX: this helper could be elimiminated with a different type
+    // structure.
+    fn termParRef(term: &Term) -> Ref<DL<ChildCell>> {
+        match term {
+            Term::LambdaT(lt) => lt.parents.clone(),
+            Term::AppT(at)    => at.parents.clone(),
+            Term::VarT(vt)    => vt.parents.clone(),
+        }
+    }
+}
+
+
 
 /*
 #[cfg(test)]
