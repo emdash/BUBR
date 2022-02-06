@@ -38,7 +38,10 @@ use std::collections::{HashMap};
  * more graph-theoretic approach.
  */
 
- 
+
+/**
+ * This ADT conforms to the "conventional" lambda expression tree.
+ */
 #[derive(Clone, Debug)]
 enum TermTree {
     Lambda {
@@ -100,7 +103,7 @@ impl TermTree {
     fn next(state: ParseState, mut input: impl Iterator<Item = Token>) -> Option<Box<TermTree>> {
         type S = ParseState;
         type T = Token;
-        match (state, input.next()?) { 
+        match (state, input.next()?) {
             (S::Start,         T::Id(v))  => Self::next(S::AppFunc(Self::var(v)), input),
             (S::Start,         T::Lambda) => Self::next(S::LambdaArg, input),
             (S::AppFunc(f),    T::Id(v))  => Some(Self::app(f, Self::var(v))),
@@ -108,14 +111,10 @@ impl TermTree {
             (S::LambdaArg,     T::Id(v))  => Self::next(S::LambdaBody(v), input),
             (S::LambdaBody(a), T::Id(v))  => Some(Self::lambda(a, Self::var(v))),
             (S::LambdaBody(a), T::Lambda) => Some(Self::lambda(a, Self::next(S::LambdaArg, input)?)),
-
-            // Catch-all for unexpected cases.
             _ => None
         }
-    }            
+    }
 }
-
-    
 
 
 /**
@@ -127,7 +126,6 @@ enum Term {
     VarRef(String),
     App
 }
-
 
 
 /**
@@ -151,32 +149,14 @@ struct TermGraph {
 }
 
 
-impl TermGraph {
-    pub fn new() -> Self {
-        TermGraph {
-            nodes: HashMap::new(),
-            relations: HashMap::new(),
-            vars: HashMap::new()
-        }
-    }
-}
-
-
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    impl Value for i32 {}
-    
     #[test]
-    fn alloc() {
-        let x = TermGraph::<i32>::new();
-    }
-    
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+    fn test_term_tree() {
+        println!("{:?}", TermTree::parse(vec![
+            Token::Id("x")
+        ].into_iter()));
     }
 }
-*/
