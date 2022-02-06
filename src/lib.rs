@@ -57,7 +57,7 @@ pub trait Types {
     // A type which represents a "symbol" in the lambda calc, usually
     // String. But if you want to replace this with an integer, or a
     // custom type, you can.
-    type Sym: Debug + Clone;
+    type Sym: Debug + Clone + PartialEq;
 }
 
 
@@ -87,6 +87,7 @@ impl<T: Types> Token<T> {
         Token::Id(name.into())
     }
 }
+
 
 /**
  * Just to get oriented, we start with a simple lambda expression
@@ -120,32 +121,59 @@ pub enum ParseError<T: Types> {
     EOF
 }
 
+
+/**
+ * Abstract over different ways of implementing an environment.
+ */
+pub trait Env<T: Types> {
+    fn subst(&self, name: T::Sym) -> Expr<T>;
+}
+
+
 type Result<V, T> = core::result::Result<V, ParseError<T>>;
 
-impl<'a, T: 'a> Expr<T> where T: Types {
-    pub fn val<B>(v: B) -> Box<Expr<T>>
+impl<'a, T: 'a> Expr<T> where T: Types + Clone {
+    pub fn val<B>(v: B) -> Box<Self>
     where B: Into<T::Val> {
         Box::new(Expr::Val(v.into()))
     }
 
-    pub fn lambda<B>(arg: B, body: Box<Expr<T>>) -> Box<Expr<T>>
+    pub fn lambda<B>(arg: B, body: Box<Self>) -> Box<Self>
     where B: Into<T::Sym> {
         Box::new(Expr::Lambda(arg.into(), body))
     }
 
-    pub fn var<B>(name: B) -> Box<Expr<T>>
+    pub fn var<B>(name: B) -> Box<Self>
     where B: Into<T::Sym> {
         Box::new(Expr::Var(name.into()))
     }
 
-    pub fn apply(func: Box<Expr<T>>, arg: Box<Expr<T>>) -> Box<Expr<T>> {
+    pub fn apply(func: Box<Self>, arg: Box<Self>) -> Box<Self> {
         Box::new(Expr::App(func, arg))
     }
 
+    /*
+    pub fn betaReduce(self, a: Box<Self>) -> Box<Self> {
+        match self {
+            Self::Lambda(x, e) => e.subst(x, a),
+            _                  => panic!("not reducible"),
+        }
+    }
+
+    pub fn subst(self, var: T::Sym, exp: Box<Self>) -> Box<Self> {
+        match self {
+            Self::Val(v)                   => Box::new(Self::Val(v)),
+            Self::Var(v)       if v == var => exp.clone(),
+            Self::Lambda(a, b) if a == var => {panic!("Identifier conflic");},
+            Self::Lambda(a, b)             => Self::Lambda(a, b.subst(var, exp)),
+            Self::App(f, x)                => Self::App(f.subst(var, exp), x.subst(var, exp)),
+        }
+    }*/
+
     pub fn parse(
         input: impl Iterator<Item = &'a Token<T>>
-    ) -> Result<Box<Expr<T>>, T> {
-        let mut stack: Vec<Box<Expr<T>>> = Vec::new();
+    ) -> Result<Box<Self>, T> {
+        let mut stack: Vec<Box<Self>> = Vec::new();
 
         for token in input { match token {
             // XXX: suspicious use of clone.
@@ -183,17 +211,28 @@ impl<'a, T: 'a> Expr<T> where T: Types {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use super::*;
     use super::expr::*;
 
     /* This shows how to implement Types for this crate */
-    #[derive(Debug, PartialEq)]
+    #[derive(Clone, Debug, PartialEq)]
     struct MyTypes;
     impl Types for MyTypes {
         type Val = i32;
         type Sym = String;
     }
     type Tok = Token<MyTypes>;
+
+    impl Env<MyTypes> for HashMap<String, Expr<MyTypes>> {
+        fn subst(&self, name: String) -> Expr<MyTypes> {
+            if let Some(val) = self.get(&name) {
+                val.clone()
+            } else {
+                Expr::Var(name)
+            }
+        }
+    }
 
     #[test]
     fn test_parse_simple0() {
@@ -238,5 +277,9 @@ mod tests {
         );
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_beta_reduction() {
     }
 }
