@@ -76,59 +76,46 @@ enum ParseState {
     LambdaArg,
     LambdaBody(String),
     AppFunc(Box<TermTree>),
-    Accept(Box<TermTree>),
-    SubExpr(Box<ParseState>, Box<ParseState>),
     Unexpected(Token),
 }
 
 
 impl TermTree {
-    pub fn lambda(arg: &str, body: Box<TermTree>) -> Box<TermTree> {
-        Box::new(TermTree::Lambda {arg: arg.to_string(), body})
+    pub fn lambda(arg: String, body: Box<TermTree>) -> Box<TermTree> {
+        Box::new(TermTree::Lambda {arg: arg, body})
     }
 
-    pub fn var(name: &str) -> Box<TermTree> {
-        Box::new(TermTree::Var {name: name.to_string()})
+    pub fn var(name: String) -> Box<TermTree> {
+        Box::new(TermTree::Var {name: name})
     }
 
     pub fn app(func: Box<TermTree>, arg: Box<TermTree>) -> Box<TermTree> {
         Box::new(TermTree::App {func, arg})
     }
 
-    pub fn parse(input: &[Token]) -> Option<Box<TermTree>> {
-        type S = ParseState;
-
-        let mut state = S::Start;
-
-        for token in input {
-            match Self::dispatch(state, &token) {
-                S::Accept(tt) => {return Some(tt);},
-                s             => {state = s;}
-            }
-        }
-
-        None
+    pub fn parse(input: impl Iterator<Item = Token>) -> Option<Box<TermTree>> {
+        Self::next(ParseState::Start, input)
     }
 
-    pub fn dispatch(state: ParseState, token: &Token) -> ParseState {
+    fn next(state: ParseState, mut input: impl Iterator<Item = Token>) -> Option<Box<TermTree>> {
         type S = ParseState;
-        type T  = Token;
-
-        match (state, token) {
-            (S::Start,          T::Id(v))  => S::AppFunc(Self::var(v)),
-
-            (S::AppFunc(f),     T::Id(v))  => S::Accept(Self::app(f, Self::var(v))),
-
-            (S::LambdaArg,      T::Id(v))  => S::LambdaBody(v.to_string()),
-
-            (S::LambdaBody(a),  T::Id(v))  => S::Accept(Self::lambda(&a, Self::var(v))),
-            (s,  T::Lambda)                => S::SubExpr(Box::new(s), Box::new(S::LambdaArg)),
+        type T = Token;
+        match (state, input.next()?) { 
+            (S::Start,         T::Id(v))  => Self::next(S::AppFunc(Self::var(v)), input),
+            (S::Start,         T::Lambda) => Self::next(S::LambdaArg, input),
+            (S::AppFunc(f),    T::Id(v))  => Some(Self::app(f, Self::var(v))),
+            (S::AppFunc(f),    T::Lambda) => Some(Self::app(f, Self::next(S::LambdaArg, input)?)),
+            (S::LambdaArg,     T::Id(v))  => Self::next(S::LambdaBody(v), input),
+            (S::LambdaBody(a), T::Id(v))  => Some(Self::lambda(a, Self::var(v))),
+            (S::LambdaBody(a), T::Lambda) => Some(Self::lambda(a, Self::next(S::LambdaArg, input)?)),
 
             // Catch-all for unexpected cases.
-            (_, t) => S::Unexpected(t.clone()),
+            _ => None
         }
-    }
+    }            
 }
+
+    
 
 
 /**
