@@ -1,7 +1,7 @@
 // The MIT License (MIT)
-// 
+//
 // Copyright © 2022 <Brandon Lewis>
-// 
+//
 // Permission is hereby granted, free of charge, to any person
 // obtaining a copy of this software and associated documentation
 // files (the “Software”), to deal in the Software without
@@ -9,10 +9,10 @@
 // modify, merge, publish, distribute, sublicense, and/or sell copies
 // of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -21,142 +21,223 @@
 // ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-// 
+//
 // Fork this project to create your own MIT license that you can
 // always link to.
-use std::collections::{HashMap};
 
 
 /**
  * What follows is a hairbrained re-inrerpretation of both the SML
- * code listing and the formal algorithm presented in the PDF. 
+ * code listing and the formal algorithm presented in the PDF.
  *
- * The algorithm, as presented, would be easier to implement in C/C++
- * or Java, or the unsafe subset of Rust.
- *
- * I gave up trying to circumvent the borrow checker. Instead I take a
- * more graph-theoretic approach.
+ * A straight-forward port of the SML was just too cumbersome to write
+ * in safe rust.
  */
+
+use core::fmt::Debug;
 
 
 /**
- * This ADT conforms to the "conventional" lambda expression tree.
+ * Should this be its own crate? Or a macro?
  */
-#[derive(Clone, Debug)]
-enum TermTree {
-    Lambda {
-        arg: String,
-        body: Box<TermTree>,
-    },
-
-    Var {
-        name: String,
-    },
-
-    App {
-        func: Box<TermTree>,
-        arg: Box<TermTree>
-    }
+fn debug<T: Debug>(prefix: &str, value: T) {
+    eprintln!("{}: {:?}", prefix, value);
 }
 
 
 /**
- * This is the flat format we produce and consume
+ * A container for various trait bounds.
+ *
+ * This gives us some parametricity without having where clauses
+ * proliferate everywhere.
+ */
+trait Types {
+    // A type which represents a "constant" value in the lambda calc.
+    type Val: Debug + Clone;
+    // A type which represents a "symbol" in the lambda calc, usually
+    // String. But if you want to replace this with an integer, or a
+    // custom type, you can.
+    type Sym: Debug + Clone;
+}
+
+
+/**
+ * This is the abstract I/O format: Flat token sequences which
+ * represent a postfix encoding lambda calculus. Postfix is used here
+ * for the usual reasons: it is unambiguous, compact, and trivial to
+ * evaluate.
+ *
+ * V is the value type, for constant values. S is the "symbol" type,
+ * for identifiers.
+ *
+ * Example: `\x.x` becomes the sequence `[Id("x"), Id("x"), Lambda]`,
+ * if S is `&'static str`.
  */
 #[derive(Clone, Debug)]
-enum Token {
-    Id(String),
+enum Token<T: Types>
+{
+    Id(T::Sym),
+    Val(T::Val),
     Lambda,
-    /*
-    Open,
-    Close,*/
+    Apply,
 }
 
-
-#[derive(Clone, Debug)]
-enum ParseState {
-    Start,
-    LambdaArg,
-    LambdaBody(String),
-    AppFunc(Box<TermTree>),
-    Unexpected(Token),
+impl<T: Types> Token<T> {
+    pub fn id<B>(name: B) -> Token<T> where B: Into<T::Sym> {
+        Token::Id(name.into())
+    }
 }
 
+/**
+ * Just to get oriented, we start with a simple lambda expression
+ * parser and evaluator.
+ */
+mod Expr {
 
-impl TermTree {
-    pub fn lambda(arg: String, body: Box<TermTree>) -> Box<TermTree> {
-        Box::new(TermTree::Lambda {arg: arg, body})
+use core::iter::Iterator;
+use core::fmt::Debug;
+use super::{Token, Types};
+
+
+/**
+ * This ADT abstracts over classic lambda expression trees.
+ *
+ */
+#[derive(Clone, Debug, PartialEq)]
+enum Expr<T: Types> {
+    Lambda(T::Sym, Box<Expr<T>>),
+    Val(T::Val),
+    Var(T::Sym),
+    App(Box<Expr<T>>, Box<Expr<T>>)
+}
+
+enum ParseError<T: Types> {
+    Unexpected(Token<T>),
+    Mismatched,
+    Underflow,
+    NotAVar,
+    EOF
+}
+
+type Result<V, T: Types> = core::result::Result<V, ParseError<T>>;
+
+impl<'a, T: 'a> Expr<T> where T: Types {
+    pub fn val(v: impl Into<T::Val>) -> Box<Expr<T>> {
+        Box::new(Expr::Val(v.into()))
     }
 
-    pub fn var(name: String) -> Box<TermTree> {
-        Box::new(TermTree::Var {name: name})
+    pub fn lambda(arg: impl Into<T::Sym>, body: Box<Expr<T>>) -> Box<Expr<T>>
+    {
+        Box::new(Expr::Lambda(arg.into(), body))
     }
 
-    pub fn app(func: Box<TermTree>, arg: Box<TermTree>) -> Box<TermTree> {
-        Box::new(TermTree::App {func, arg})
+    pub fn var(name: impl Into<T::Sym>) -> Box<Expr<T>> {
+        Box::new(Expr::Var(name.into()))
     }
 
-    pub fn parse(input: impl Iterator<Item = Token>) -> Option<Box<TermTree>> {
-        Self::next(ParseState::Start, input)
+    pub fn apply(func: Box<Expr<T>>, arg: Box<Expr<T>>) -> Box<Expr<T>> {
+        Box::new(Expr::App(func, arg))
     }
 
-    fn next(state: ParseState, mut input: impl Iterator<Item = Token>) -> Option<Box<TermTree>> {
-        type S = ParseState;
-        type T = Token;
-        match (state, input.next()?) {
-            (S::Start,         T::Id(v))  => Self::next(S::AppFunc(Self::var(v)), input),
-            (S::Start,         T::Lambda) => Self::next(S::LambdaArg, input),
-            (S::AppFunc(f),    T::Id(v))  => Some(Self::app(f, Self::var(v))),
-            (S::AppFunc(f),    T::Lambda) => Some(Self::app(f, Self::next(S::LambdaArg, input)?)),
-            (S::LambdaArg,     T::Id(v))  => Self::next(S::LambdaBody(v), input),
-            (S::LambdaBody(a), T::Id(v))  => Some(Self::lambda(a, Self::var(v))),
-            (S::LambdaBody(a), T::Lambda) => Some(Self::lambda(a, Self::next(S::LambdaArg, input)?)),
-            _ => None
+    pub fn parse(input: impl Iterator<Item = &'a Token<T>>) -> Result<Box<Expr<T>>, T> {
+        let mut stack: Vec<Box<Expr<T>>> = Vec::new();
+
+        for token in input { match token {
+            Token::Val(v) => stack.push(Self::val(v.clone())),
+            Token::Id(s)  => stack.push(Expr::var(s.clone())),
+            Token::Lambda => {
+                let body = stack.pop().ok_or(ParseError::Underflow)?;
+                let arg = stack.pop().ok_or(ParseError::Underflow)?;
+                if let Expr::Var(s) = *arg {
+                    stack.push(Expr::lambda(s, body));
+                } else {
+                    return Err(ParseError::NotAVar);
+                }
+            },
+            Token::Apply  => {
+                let arg = stack.pop().unwrap();
+                let func = stack.pop().unwrap();
+                stack.push(Expr::apply(func, arg));
+            }
+        } }
+
+        if stack.len() == 1 {
+            Ok(stack.pop().ok_or(ParseError::Underflow)?)
+        } else {
+            // If we got here and there's not exactly one value on the
+            // stack, the program is incomplete
+            Err(ParseError::EOF)
         }
     }
 }
 
-
-/**
- * There are three kinds of nodes: lambdas, var refs, and
- * applications. 
- */
-enum Term {
-    Lambda,
-    VarRef(String),
-    App
-}
-
-
-/**
- * These are the types of edges which can exist between two nodes.
- */
-enum Relation {
-    AppFunc,
-    AppArg ,
-    LambdaBody
-}
-
-
-/**
- * So the whole graph is a set of nodes, and a set of edges, plus some
- * extra book-keeping.
- */
-struct TermGraph {
-    nodes: HashMap<u32, Term>,
-    relations: HashMap<(u32, u32), Relation>,
-    vars: HashMap<String, u32>
-}
+} /* mod Expr */
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_term_tree() {
-        println!("{:?}", TermTree::parse(vec![
-            Token::Id("x")
-        ].into_iter()));
+
+    struct MyTypes;
+
+    impl Types for MyTypes {
+        type Val = i32;
+        type Sym = String;
     }
+
+    type Tok = Token<MyTypes>;
+
+/*
+    #[test]
+    fn test_parse_simple0() {
+        let got = Expr::parse(vec![
+            Token::id("x"),
+            Token::id("y")
+        ].into_iter()).unwrap();
+
+        let expected = Expr::app(
+            Expr::var("x".to_string()),
+            Expr::var("y".to_string())
+        );
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_parse_simple1() {
+        let got = Expr::parse(vec![
+            Token::Lambda,
+            Token::id("x"),
+            Token::id("y")
+        ].into_iter()).unwrap();
+
+        let expected = Expr::lambda(
+            "x".to_string(),
+            Expr::var("y".to_string())
+        );
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_parse_simple2() {
+        let got = Expr::parse(vec![
+            Token::Lambda,
+            Token::id("x"),
+            Token::id("y"),
+            Token::id("z"),
+        ].into_iter()).unwrap();
+
+        let expected = Expr::app(
+            Expr::lambda(
+                "x".to_string(),
+                Expr::var("y".to_string())
+            ),
+            Expr::var("z".to_string())
+        );
+
+        assert_eq!(got, expected);
+    }
+*/
 }
