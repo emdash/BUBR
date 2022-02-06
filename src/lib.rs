@@ -132,6 +132,7 @@ pub trait Env<T: Types> {
 
 type Result<V, T> = core::result::Result<V, ParseError<T>>;
 
+
 impl<'a, T: 'a> Expr<T> where T: Types + Clone {
     pub fn val<B>(v: B) -> Box<Self>
     where B: Into<T::Val> {
@@ -152,23 +153,28 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
         Box::new(Expr::App(func, arg))
     }
 
-    /*
-    pub fn betaReduce(self, a: Box<Self>) -> Box<Self> {
+    pub fn beta_reduce(self) -> Box<Self> {
         match self {
-            Self::Lambda(x, e) => e.subst(x, a),
-            _                  => panic!("not reducible"),
+            Self::App(f, x) => if let Self::Lambda(a, b) = *f {
+                b.subst(a, x)
+            } else {
+                panic!("not a function!");
+            }
+            _ => panic!("not reducible"),
         }
     }
 
     pub fn subst(self, var: T::Sym, exp: Box<Self>) -> Box<Self> {
         match self {
-            Self::Val(v)                   => Box::new(Self::Val(v)),
             Self::Var(v)       if v == var => exp.clone(),
-            Self::Lambda(a, b) if a == var => {panic!("Identifier conflic");},
-            Self::Lambda(a, b)             => Self::Lambda(a, b.subst(var, exp)),
-            Self::App(f, x)                => Self::App(f.subst(var, exp), x.subst(var, exp)),
+            Self::Lambda(a, _) if a == var => {panic!("Identifier conflic");},
+            Self::Lambda(a, b)             => Box::new(Self::Lambda(a, b.subst(var, exp))),
+            Self::App(f, x)                => Box::new(Self::App(
+                f.subst(var.clone(), exp.clone()),
+                x.subst(var, exp))),
+            x                              => Box::new(x)
         }
-    }*/
+    }
 
     pub fn parse(
         input: impl Iterator<Item = &'a Token<T>>
@@ -223,6 +229,7 @@ mod tests {
         type Sym = String;
     }
     type Tok = Token<MyTypes>;
+    type Exp = Expr<MyTypes>;
 
     impl Env<MyTypes> for HashMap<String, Expr<MyTypes>> {
         fn subst(&self, name: String) -> Expr<MyTypes> {
@@ -281,5 +288,32 @@ mod tests {
 
     #[test]
     fn test_beta_reduction() {
+        type E = Exp;
+
+        // (\x.x) 0 -b-> 0
+        assert_eq!(
+            E::apply(E::lambda("x", E::var("x")), E::val(0)).beta_reduce(),
+            E::val(0)
+        );
+
+        // (\x.(\y.x)) 0 -b-> (\y.0)
+        assert_eq!(
+            E::apply(
+                E::lambda("x",
+                          E::lambda("y",
+                                    E::var("x"))),
+                E::val(0)).beta_reduce(),
+            E::lambda("y", E::val(0))
+        );
+
+        // (\f.f 0) (\x.x) -b-> (\x.x) 0 -b-> 0
+        assert_eq!(
+            E::apply(
+                E::lambda("f", E::apply(E::var("f"), E::val(0))),
+                E::lambda("x", E::var("x")))
+                .beta_reduce()
+                .beta_reduce(),
+            E::val(0)
+        )
     }
 }
