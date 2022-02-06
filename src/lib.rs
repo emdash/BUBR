@@ -120,19 +120,21 @@ pub enum ParseError<T: Types> {
     EOF
 }
 
-type Result<V, T: Types> = core::result::Result<V, ParseError<T>>;
+type Result<V, T> = core::result::Result<V, ParseError<T>>;
 
 impl<'a, T: 'a> Expr<T> where T: Types {
-    pub fn val(v: impl Into<T::Val>) -> Box<Expr<T>> {
+    pub fn val<B>(v: B) -> Box<Expr<T>>
+    where B: Into<T::Val> {
         Box::new(Expr::Val(v.into()))
     }
 
-    pub fn lambda(arg: impl Into<T::Sym>, body: Box<Expr<T>>) -> Box<Expr<T>>
-    {
+    pub fn lambda<B>(arg: B, body: Box<Expr<T>>) -> Box<Expr<T>>
+    where B: Into<T::Sym> {
         Box::new(Expr::Lambda(arg.into(), body))
     }
 
-    pub fn var(name: impl Into<T::Sym>) -> Box<Expr<T>> {
+    pub fn var<B>(name: B) -> Box<Expr<T>>
+    where B: Into<T::Sym> {
         Box::new(Expr::Var(name.into()))
     }
 
@@ -140,7 +142,9 @@ impl<'a, T: 'a> Expr<T> where T: Types {
         Box::new(Expr::App(func, arg))
     }
 
-    pub fn parse(input: impl Iterator<Item = &'a Token<T>>) -> Result<Box<Expr<T>>, T> {
+    pub fn parse(
+        input: impl Iterator<Item = &'a Token<T>>
+    ) -> Result<Box<Expr<T>>, T> {
         let mut stack: Vec<Box<Expr<T>>> = Vec::new();
 
         for token in input { match token {
@@ -199,42 +203,33 @@ mod tests {
             Tok::Apply
         ].iter()).unwrap();
 
-        let expected = Expr::apply(
-            Expr::var("x".to_string()),
-            Expr::var("y".to_string())
-        );
-
+        let expected = Expr::apply(Expr::var("x"), Expr::var("y"));
         assert_eq!(got, expected);
     }
-
-    /*
 
     #[test]
     fn test_parse_simple1() {
         let got = Expr::parse(vec![
-            Token::Lambda,
-            Token::id("x"),
-            Token::id("y")
-        ].into_iter()).unwrap();
+            Tok::id("x"),
+            Tok::id("y"),
+            Tok::Lambda,
+        ].iter()).unwrap();
 
-        let expected = Expr::lambda(
-            "x".to_string(),
-            Expr::var("y".to_string())
-        );
-
+        let expected = Expr::lambda("x", Expr::var("y"));
         assert_eq!(got, expected);
     }
 
     #[test]
     fn test_parse_simple2() {
         let got = Expr::parse(vec![
-            Token::Lambda,
-            Token::id("x"),
-            Token::id("y"),
-            Token::id("z"),
-        ].into_iter()).unwrap();
+            Tok::id("x"),
+            Tok::id("y"),
+            Tok::Lambda,
+            Tok::id("z"),
+            Tok::Apply,
+        ].iter()).unwrap();
 
-        let expected = Expr::app(
+        let expected = Expr::apply(
             Expr::lambda(
                 "x".to_string(),
                 Expr::var("y".to_string())
@@ -244,5 +239,4 @@ mod tests {
 
         assert_eq!(got, expected);
     }
-*/
 }
