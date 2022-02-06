@@ -51,7 +51,7 @@ fn debug<T: Debug>(prefix: &str, value: T) {
  * This gives us some parametricity without having where clauses
  * proliferate everywhere.
  */
-trait Types {
+pub trait Types {
     // A type which represents a "constant" value in the lambda calc.
     type Val: Debug + Clone;
     // A type which represents a "symbol" in the lambda calc, usually
@@ -74,7 +74,7 @@ trait Types {
  * if S is `&'static str`.
  */
 #[derive(Clone, Debug)]
-enum Token<T: Types>
+pub enum Token<T: Types>
 {
     Id(T::Sym),
     Val(T::Val),
@@ -92,7 +92,7 @@ impl<T: Types> Token<T> {
  * Just to get oriented, we start with a simple lambda expression
  * parser and evaluator.
  */
-mod Expr {
+mod expr {
 
 use core::iter::Iterator;
 use core::fmt::Debug;
@@ -104,14 +104,15 @@ use super::{Token, Types};
  *
  */
 #[derive(Clone, Debug, PartialEq)]
-enum Expr<T: Types> {
+pub enum Expr<T: Types> {
     Lambda(T::Sym, Box<Expr<T>>),
     Val(T::Val),
     Var(T::Sym),
     App(Box<Expr<T>>, Box<Expr<T>>)
 }
 
-enum ParseError<T: Types> {
+#[derive(Debug)]
+pub enum ParseError<T: Types> {
     Unexpected(Token<T>),
     Mismatched,
     Underflow,
@@ -143,11 +144,13 @@ impl<'a, T: 'a> Expr<T> where T: Types {
         let mut stack: Vec<Box<Expr<T>>> = Vec::new();
 
         for token in input { match token {
+            // XXX: suspicious use of clone.
             Token::Val(v) => stack.push(Self::val(v.clone())),
             Token::Id(s)  => stack.push(Expr::var(s.clone())),
             Token::Lambda => {
                 let body = stack.pop().ok_or(ParseError::Underflow)?;
                 let arg = stack.pop().ok_or(ParseError::Underflow)?;
+                // XXX: suspicious suspicious move.
                 if let Expr::Var(s) = *arg {
                     stack.push(Expr::lambda(s, body));
                 } else {
@@ -171,38 +174,40 @@ impl<'a, T: 'a> Expr<T> where T: Types {
     }
 }
 
-} /* mod Expr */
+} /* mod expr */
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::expr::*;
 
-
+    /* This shows how to implement Types for this crate */
+    #[derive(Debug, PartialEq)]
     struct MyTypes;
-
     impl Types for MyTypes {
         type Val = i32;
         type Sym = String;
     }
-
     type Tok = Token<MyTypes>;
 
-/*
     #[test]
     fn test_parse_simple0() {
         let got = Expr::parse(vec![
-            Token::id("x"),
-            Token::id("y")
-        ].into_iter()).unwrap();
+            Tok::id("x"),
+            Tok::id("y"),
+            Tok::Apply
+        ].iter()).unwrap();
 
-        let expected = Expr::app(
+        let expected = Expr::apply(
             Expr::var("x".to_string()),
             Expr::var("y".to_string())
         );
 
         assert_eq!(got, expected);
     }
+
+    /*
 
     #[test]
     fn test_parse_simple1() {
