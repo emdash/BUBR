@@ -230,8 +230,12 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
     // point.
     fn sigma_reduce(func: T::Val, arg: Box<Self>) -> ReduceResult<T> {
         match *arg {
-            Self::Val(x) => Ok(Self::val(<T::Val as SigmaRules>::unary(func, x).unwrap())),
-            _            => {panic!("omg, multiple args! panic!");}
+            Self::Val(x) => T::Val::unary(func, x)
+                .map_or_else(
+                    |e| Err(ReduceError::NotSigmaReducible(e)),
+                    |v| Ok(Self::val(v))
+                ),
+            _ => {panic!("omg, multiple args! panic!");}
         }
     }
 
