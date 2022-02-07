@@ -105,3 +105,4 @@ impl<T: Types> Token<T> {
  * parser and evaluator.
  */
 mod expr;
+mod trs;

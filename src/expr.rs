@@ -187,7 +187,6 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use super::*;
 
     /* This shows how to implement Types for this crate */
