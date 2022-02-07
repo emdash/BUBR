@@ -197,7 +197,7 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
             Self::App(f, x) => match *f {
                 Self::Lambda(a, b) => Ok(b.beta_reduce(a, x)?),
                 Self::Val(v)       => Self::sigma_reduce(v, x),
-                _                  => Err(ReduceError::NotALambda),
+                x                  => x.reduce()
             },
             x => Ok(Box::new(x))
         }
@@ -481,11 +481,15 @@ mod tests {
             E::val(Prim(true))
         );
 
+        /* This case is failing, because something isn't quite right
+         * with the recursion.
+         */
         /*
         assert_eq!(
             E::apply(
-                E::apply(E::val(Binary(Xor)), E::val(Prim(true))),
-                E::val(Prim(true))).reduce().unwrap(),
+                E::apply(E::val(Binary(Xor)),
+                         E::val(Prim(true))),
+                E::val(Prim(true))).reduce().unwrap().reduce().unwrap(),
             E::val(Prim(false))
         );*/
 
