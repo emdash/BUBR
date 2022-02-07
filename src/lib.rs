@@ -27,11 +27,8 @@
 
 
 /**
- * What follows is a hairbrained re-inrerpretation of both the SML
- * code listing and the formal algorithm presented in the PDF.
- *
- * A straight-forward port of the SML was just too cumbersome to write
- * in safe rust.
+ * What follows has really deviated significantly from the original
+ * intent of this side-quest.
  */
 
 use core::fmt::Debug;
@@ -46,7 +43,7 @@ fn debug<T: Debug>(prefix: &str, value: T) {
 
 
 /**
- * Captures values and operations external to pure lambda calculus.
+ * Trait for operations external to pure lambda calculus.
  *
  * See tests for an examples of how this is used.
  */
@@ -126,6 +123,7 @@ use super::{Token, Types, SigmaRules};
 /**
  * This ADT abstracts over classic lambda expression trees.
  *
+ * In theory, all of computing fits into this datatype.
  */
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr<T: Types> {
@@ -142,14 +140,6 @@ pub enum ParseError<T: Types> {
     Underflow,
     NotAVar,
     EOF
-}
-
-
-/**
- * Abstract over different ways of implementing an environment.
- */
-pub trait Env<T: Types> {
-    fn subst(&self, name: T::Sym) -> Expr<T>;
 }
 
 
@@ -176,17 +166,10 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
         Box::new(Expr::App(func, arg))
     }
 
-    fn sigma_reduce(func: T::Val, arg: Box<Self>) -> Box<Self> {
-        match *arg {
-            Self::Val(x) => Self::val(<T::Val as SigmaRules>::unary(func, x).unwrap()),
-            _            => {panic!("omg, multiple args! panic!");}
-        }
-    }
-
-    pub fn beta_reduce(self) -> Box<Self> {
+    pub fn reduce(self) -> Box<Self> {
         match self {
             Self::App(f, x) => match *f {
-                Self::Lambda(a, b) => b.subst(a, x),
+                Self::Lambda(a, b) => b.beta_reduce(a, x),
                 Self::Val(v)       => Self::sigma_reduce(v, x),
                 _                  => {panic!("not a function!");},
             },
@@ -194,14 +177,21 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
         }
     }
 
-    pub fn subst(self, var: T::Sym, exp: Box<Self>) -> Box<Self> {
+    fn sigma_reduce(func: T::Val, arg: Box<Self>) -> Box<Self> {
+        match *arg {
+            Self::Val(x) => Self::val(<T::Val as SigmaRules>::unary(func, x).unwrap()),
+            _            => {panic!("omg, multiple args! panic!");}
+        }
+    }
+
+    fn beta_reduce(self, var: T::Sym, exp: Box<Self>) -> Box<Self> {
         match self {
             Self::Var(v)       if v == var => exp.clone(),
             Self::Lambda(a, _) if a == var => {panic!("Identifier conflic");},
-            Self::Lambda(a, b)             => Self::lambda(a, b.subst(var, exp)),
+            Self::Lambda(a, b)             => Self::lambda(a, b.beta_reduce(var, exp)),
             Self::App(f, x)                => Self::apply(
-                f.subst(var.clone(), exp.clone()),
-                x.subst(var, exp)),
+                f.beta_reduce(var.clone(), exp.clone()),
+                x.beta_reduce(var, exp)),
             x                              => Box::new(x)
         }
     }
@@ -270,16 +260,6 @@ mod tests {
     type Tok = Token<MyTypes>;
     type Exp = Expr<MyTypes>;
 
-    impl Env<MyTypes> for HashMap<String, Expr<MyTypes>> {
-        fn subst(&self, name: String) -> Expr<MyTypes> {
-            if let Some(val) = self.get(&name) {
-                val.clone()
-            } else {
-                Expr::Var(name)
-            }
-        }
-    }
-
     #[test]
     fn test_parse_simple0() {
         let got = Expr::parse(vec![
@@ -331,7 +311,7 @@ mod tests {
 
         // (\x.x) 0 -b-> 0
         assert_eq!(
-            E::apply(E::lambda("x", E::var("x")), E::val(0)).beta_reduce(),
+            E::apply(E::lambda("x", E::var("x")), E::val(0)).reduce(),
             E::val(0)
         );
 
@@ -341,7 +321,7 @@ mod tests {
                 E::lambda("x",
                           E::lambda("y",
                                     E::var("x"))),
-                E::val(0)).beta_reduce(),
+                E::val(0)).reduce(),
             E::lambda("y", E::val(0))
         );
 
@@ -350,8 +330,8 @@ mod tests {
             E::apply(
                 E::lambda("f", E::apply(E::var("f"), E::val(0))),
                 E::lambda("x", E::var("x")))
-                .beta_reduce()
-                .beta_reduce(),
+                .reduce()
+                .reduce(),
             E::val(0)
         )
     }
@@ -426,7 +406,7 @@ mod tests {
         use SigmaTestVal::*;
 
         assert_eq!(
-            E::apply(E::val(Not), E::val(Prim(true))).beta_reduce(),
+            E::apply(E::val(Not), E::val(Prim(true))).reduce(),
             E::val(Prim(false))
         );
     }
