@@ -154,8 +154,15 @@ pub enum ParseError<T: Types> {
     EOF
 }
 
+#[derive(Debug)]
+pub enum ReduceError<T: Types> {
+    NotBetaReducible,
+    NotSigmaReducible(<T::Val as SigmaRules>::Error)
+}
 
-type Result<V, T> = core::result::Result<V, ParseError<T>>;
+
+type ParseResult<T> = core::result::Result<Box<Expr<T>>, ParseError<T>>;
+type ReduceResult<T> = core::result::Result<Expr<T>, ReduceError<T>>;
 
 
 impl<'a, T: 'a> Expr<T> where T: Types + Clone {
@@ -210,7 +217,7 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
 
     pub fn parse(
         input: impl Iterator<Item = &'a Token<T>>
-    ) -> Result<Box<Self>, T> {
+    ) -> ParseResult<T> {
         let mut stack: Vec<Box<Self>> = Vec::new();
 
         for token in input { match token {
