@@ -168,6 +168,11 @@ type ReduceResult<T> = core::result::Result<Box<Expr<T>>, ReduceError<T>>;
 
 
 impl<'a, T: 'a> Expr<T> where T: Types + Clone {
+
+    /* These are just wrapers around constructors that take a
+     * (possibly) borrowed value and implicitly copy (as required) and
+     * Box::new() their argument.
+     */
     pub fn val<B>(v: B) -> Box<Self>
     where B: Into<T::Val> {
         Box::new(Expr::Val(v.into()))
@@ -187,24 +192,22 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
         Box::new(Expr::App(func, arg))
     }
 
+    /* Reduce a reducible expression */
     pub fn reduce(self) -> ReduceResult<T> {
         match self {
+            // We distinguish between beta and sigma reduction by
+            // inspecting the function term. A lambda implies beta
+            // reduction, while a value implies sigma reduction.
             Self::App(f, x) => match *f {
                 Self::Lambda(a, b) => Ok(b.beta_reduce(a, x)?),
-                Self::Val(v)       => Ok(Self::sigma_reduce(v, x)),
+                Self::Val(v)       => Self::sigma_reduce(v, x),
                 _                  => Err(ReduceError::NotALambda),
             },
             _ => Err(ReduceError::NotBetaReducible)
         }
     }
 
-    fn sigma_reduce(func: T::Val, arg: Box<Self>) -> Box<Self> {
-        match *arg {
-            Self::Val(x) => Self::val(<T::Val as SigmaRules>::unary(func, x).unwrap()),
-            _            => {panic!("omg, multiple args! panic!");}
-        }
-    }
-
+    // Perform the substitution implied by the beta reduction.
     fn beta_reduce(self, var: T::Sym, exp: Box<Self>) -> ReduceResult<T> {
         match self {
             Self::Var(v)       if v == var => Ok(exp.clone()),
@@ -216,6 +219,22 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
             x                              => Ok(Box::new(x))
         }
     }
+
+    // Sigma reduction is delegated to the external value type, T::Val
+    //
+    // XXX: For now this only handles unary reduction. To be useful,
+    // we need to let the SigmaRules trait match on arbitrary
+    // expression patterns.
+    //
+    // Not sure how to do this, but maybe I'll get a brainwave at some
+    // point.
+    fn sigma_reduce(func: T::Val, arg: Box<Self>) -> ReduceResult<T> {
+        match *arg {
+            Self::Val(x) => Ok(Self::val(<T::Val as SigmaRules>::unary(func, x).unwrap())),
+            _            => {panic!("omg, multiple args! panic!");}
+        }
+    }
+
 
     pub fn parse(
         input: impl Iterator<Item = &'a Token<T>>
