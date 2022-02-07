@@ -54,15 +54,15 @@ pub trait SigmaRules: Sized {
     type Error: Sized + Debug + Default;
 
     // open question how to properly abstract over arity
-    fn unary(f: Self, x: Self) -> Result<Self, Self::Error> {
+    fn unary(_f: Self, _x: Self) -> Result<Self, Self::Error> {
         Err(Self::Error::default())
     }
 
-    fn binary(f: Self, x: Self, y: Self) -> Result<Self, Self::Error> {
+    fn binary(_f: Self, _x: Self, _y: Self) -> Result<Self, Self::Error> {
         Err(Self::Error::default())
     }
 
-    fn ternary(f: Self, x: Self, y: Self) -> Result<Self, Self::Error> {
+    fn ternary(_f: Self, _x: Self, _y: Self) -> Result<Self, Self::Error> {
         Err(Self::Error::default())
     }
 }
@@ -120,7 +120,7 @@ mod expr {
 
 use core::iter::Iterator;
 use core::fmt::Debug;
-use super::{Token, Types};
+use super::{Token, Types, SigmaRules};
 
 
 /**
@@ -176,14 +176,21 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
         Box::new(Expr::App(func, arg))
     }
 
+    fn sigma_reduce(func: T::Val, arg: Box<Self>) -> Box<Self> {
+        match *arg {
+            Self::Val(x) => Self::val(<T::Val as SigmaRules>::unary(func, x).unwrap()),
+            _            => {panic!("omg, multiple args! panic!");}
+        }
+    }
+
     pub fn beta_reduce(self) -> Box<Self> {
         match self {
-            Self::App(f, x) => if let Self::Lambda(a, b) = *f {
-                b.subst(a, x)
-            } else {
-                panic!("not a function!");
-            }
-            _ => panic!("not reducible"),
+            Self::App(f, x) => match *f {
+                Self::Lambda(a, b) => b.subst(a, x),
+                Self::Val(v)       => Self::sigma_reduce(v, x),
+                _                  => {panic!("not a function!");},
+            },
+            _ => panic!("not reducible!"),
         }
     }
 
@@ -191,10 +198,10 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
         match self {
             Self::Var(v)       if v == var => exp.clone(),
             Self::Lambda(a, _) if a == var => {panic!("Identifier conflic");},
-            Self::Lambda(a, b)             => Box::new(Self::Lambda(a, b.subst(var, exp))),
-            Self::App(f, x)                => Box::new(Self::App(
+            Self::Lambda(a, b)             => Self::lambda(a, b.subst(var, exp)),
+            Self::App(f, x)                => Self::apply(
                 f.subst(var.clone(), exp.clone()),
-                x.subst(var, exp))),
+                x.subst(var, exp)),
             x                              => Box::new(x)
         }
     }
@@ -363,7 +370,6 @@ mod tests {
         And,
         Or,
         Xor,
-        Implication
     }
 
     // This is optional, but your users will thank you.
@@ -398,9 +404,30 @@ mod tests {
                 _                          => Err(Self::Error::Arity),
             }
         }
+
+        fn binary(f: Self, x: Self, y: Self) -> Result<Self, Self::Error> {
+            use SigmaTestVal::*;
+            use SigmaTestError::*;
+            match (f, x, y) {
+                (Prim(_), _, _)         => Err(NotAnOperator),
+                (Not, _, _)             => Err(Arity),
+                (And, Prim(x), Prim(y)) => Ok(Prim(x && y)),
+                (Or,  Prim(x), Prim(y)) => Ok(Prim(x || y)),
+                (Xor, Prim(x), Prim(y)) => Ok(Prim(x ^  y)),
+                _                       => Err(NotABool),
+            }
+        }
+
     }
 
     #[test]
     fn test_sigma_reduction() {
+        type E = Expr<SigmaTestTypes>;
+        use SigmaTestVal::*;
+
+        assert_eq!(
+            E::apply(E::val(Not), E::val(Prim(true))).beta_reduce(),
+            E::val(Prim(false))
+        );
     }
 }
