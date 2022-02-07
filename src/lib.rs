@@ -156,13 +156,15 @@ pub enum ParseError<T: Types> {
 
 #[derive(Debug)]
 pub enum ReduceError<T: Types> {
+    NameCollision,
+    NotALambda,
     NotBetaReducible,
     NotSigmaReducible(<T::Val as SigmaRules>::Error)
 }
 
 
 type ParseResult<T> = core::result::Result<Box<Expr<T>>, ParseError<T>>;
-type ReduceResult<T> = core::result::Result<Expr<T>, ReduceError<T>>;
+type ReduceResult<T> = core::result::Result<Box<Expr<T>>, ReduceError<T>>;
 
 
 impl<'a, T: 'a> Expr<T> where T: Types + Clone {
@@ -185,14 +187,14 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
         Box::new(Expr::App(func, arg))
     }
 
-    pub fn reduce(self) -> Box<Self> {
+    pub fn reduce(self) -> ReduceResult<T> {
         match self {
             Self::App(f, x) => match *f {
-                Self::Lambda(a, b) => b.beta_reduce(a, x),
-                Self::Val(v)       => Self::sigma_reduce(v, x),
-                _                  => {panic!("not a function!");},
+                Self::Lambda(a, b) => Ok(b.beta_reduce(a, x)?),
+                Self::Val(v)       => Ok(Self::sigma_reduce(v, x)),
+                _                  => Err(ReduceError::NotALambda),
             },
-            _ => panic!("not reducible!"),
+            _ => Err(ReduceError::NotBetaReducible)
         }
     }
 
@@ -203,15 +205,15 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
         }
     }
 
-    fn beta_reduce(self, var: T::Sym, exp: Box<Self>) -> Box<Self> {
+    fn beta_reduce(self, var: T::Sym, exp: Box<Self>) -> ReduceResult<T> {
         match self {
-            Self::Var(v)       if v == var => exp.clone(),
-            Self::Lambda(a, _) if a == var => {panic!("Identifier conflic");},
-            Self::Lambda(a, b)             => Self::lambda(a, b.beta_reduce(var, exp)),
-            Self::App(f, x)                => Self::apply(
-                f.beta_reduce(var.clone(), exp.clone()),
-                x.beta_reduce(var, exp)),
-            x                              => Box::new(x)
+            Self::Var(v)       if v == var => Ok(exp.clone()),
+            Self::Lambda(a, _) if a == var => Err(ReduceError::NameCollision),
+            Self::Lambda(a, b)             => Ok(Self::lambda(a, b.beta_reduce(var, exp)?)),
+            Self::App(f, x)                => Ok(Self::apply(
+                f.beta_reduce(var.clone(), exp.clone())?,
+                x.beta_reduce(var, exp)?)),
+            x                              => Ok(Box::new(x))
         }
     }
 
@@ -330,7 +332,7 @@ mod tests {
 
         // (\x.x) 0 -b-> 0
         assert_eq!(
-            E::apply(E::lambda("x", E::var("x")), E::val(0)).reduce(),
+            E::apply(E::lambda("x", E::var("x")), E::val(0)).reduce().unwrap(),
             E::val(0)
         );
 
@@ -340,7 +342,7 @@ mod tests {
                 E::lambda("x",
                           E::lambda("y",
                                     E::var("x"))),
-                E::val(0)).reduce(),
+                E::val(0)).reduce().unwrap(),
             E::lambda("y", E::val(0))
         );
 
@@ -350,7 +352,9 @@ mod tests {
                 E::lambda("f", E::apply(E::var("f"), E::val(0))),
                 E::lambda("x", E::var("x")))
                 .reduce()
-                .reduce(),
+                .unwrap()
+                .reduce()
+                .unwrap(),
             E::val(0)
         )
     }
@@ -434,7 +438,7 @@ mod tests {
         use SigmaTestVal::*;
 
         assert_eq!(
-            E::apply(E::val(Not), E::val(Prim(true))).reduce(),
+            E::apply(E::val(Not), E::val(Prim(true))).reduce().unwrap(),
             E::val(Prim(false))
         );
     }
