@@ -46,6 +46,17 @@ fn debug<T: Debug>(prefix: &str, value: T) {
 
 
 /**
+ * Captures values and operations external to pure lambda calculus.
+ *
+ * See tests for an examples of how this is used.
+ */
+pub trait SigmaRules: Sized {
+    type Error: Sized + Debug;
+    fn apply(f: Self, x: Self) -> Result<Self, Self::Error>;
+}
+
+
+/**
  * A container for various trait bounds.
  *
  * This gives us some parametricity without having where clauses
@@ -53,7 +64,7 @@ fn debug<T: Debug>(prefix: &str, value: T) {
  */
 pub trait Types {
     // A type which represents a "constant" value in the lambda calc.
-    type Val: Debug + Clone;
+    type Val: Debug + Clone + SigmaRules;
     // A type which represents a "symbol" in the lambda calc, usually
     // String. But if you want to replace this with an integer, or a
     // custom type, you can.
@@ -224,10 +235,20 @@ mod tests {
     /* This shows how to implement Types for this crate */
     #[derive(Clone, Debug, PartialEq)]
     struct MyTypes;
+
     impl Types for MyTypes {
         type Val = i32;
         type Sym = String;
     }
+
+    impl SigmaRules for i32 {
+        type Error = ();
+        // applying one int to another is nonsense
+        fn apply(f: i32, x: i32) -> Result<i32, Self::Error> {
+            Err(())
+        }
+    }
+
     type Tok = Token<MyTypes>;
     type Exp = Expr<MyTypes>;
 
