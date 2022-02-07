@@ -124,6 +124,18 @@ use super::{Token, Types, SigmaRules};
  * This ADT abstracts over classic lambda expression trees.
  *
  * In theory, all of computing fits into this datatype.
+ *
+ * What we're going for here is a correct-by-construction reference
+ * implementation, against which we can compare the behavior of other
+ * approaches.
+ *
+ * It's not supposed to be efficient, because LC generally isn't
+ * efficient. But it *is* supposed to be *general*. I.e. it meant to
+ * be "optimal for a given choice of `Val` and `Sym`, types for "sigma
+ * terms" and "variable names", respectively.
+ *
+ * To go further than that, we'd need to abstract over memory
+ * management as well. I'm still not sure how to do that.
  */
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr<T: Types> {
@@ -352,7 +364,12 @@ mod tests {
         Xor,
     }
 
-    // This is optional, but your users will thank you.
+    // This is optional, but you will thank yourself when things go
+    // bananas. Extra credit if you can figure out howto track source
+    // locations somehow.
+    //
+    // Release mode can just use (), for undebuggable, unrecoverable
+    // errors.
     #[derive(Debug)]
     enum SigmaTestError {
         NotImplemented,
@@ -397,6 +414,10 @@ mod tests {
                 _                       => Err(NotABool),
             }
         }
+
+        // ternary ... ? etc.  This pattern obviously doesn't scale,
+        // but I'm not sure how to do something better within the
+        // limits of what I know about rust.
 
     }
 
