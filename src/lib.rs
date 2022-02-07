@@ -51,8 +51,20 @@ fn debug<T: Debug>(prefix: &str, value: T) {
  * See tests for an examples of how this is used.
  */
 pub trait SigmaRules: Sized {
-    type Error: Sized + Debug;
-    fn apply(f: Self, x: Self) -> Result<Self, Self::Error>;
+    type Error: Sized + Debug + Default;
+
+    // open question how to properly abstract over arity
+    fn unary(f: Self, x: Self) -> Result<Self, Self::Error> {
+        Err(Self::Error::default())
+    }
+
+    fn binary(f: Self, x: Self, y: Self) -> Result<Self, Self::Error> {
+        Err(Self::Error::default())
+    }
+
+    fn ternary(f: Self, x: Self, y: Self) -> Result<Self, Self::Error> {
+        Err(Self::Error::default())
+    }
 }
 
 
@@ -243,10 +255,9 @@ mod tests {
 
     impl SigmaRules for i32 {
         type Error = ();
-        // applying one int to another is nonsense
-        fn apply(f: i32, x: i32) -> Result<i32, Self::Error> {
-            Err(())
-        }
+
+        // applying one int to another is nonsense, so we leave the
+        // default impls here.
     }
 
     type Tok = Token<MyTypes>;
@@ -336,5 +347,60 @@ mod tests {
                 .beta_reduce(),
             E::val(0)
         )
+    }
+
+    /**
+     * This section demonstrates extending the pure lambda calc with sigma rules.
+     */
+    #[derive(Clone, Debug, PartialEq)]
+    struct SigmaTestTypes;
+
+    // Note how the enum contains both values *and* operations.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum SigmaTestVal {
+        Prim(bool),
+        Not,
+        And,
+        Or,
+        Xor,
+        Implication
+    }
+
+    // This is optional, but your users will thank you.
+    #[derive(Debug)]
+    enum SigmaTestError {
+        NotImplemented,
+        NotABool,
+        NotAnOperator,
+        Arity
+    }
+
+    // Pick a reasonable default error.
+    impl Default for SigmaTestError {
+        fn default() -> Self { Self::NotImplemented }
+    }
+
+    // Implement Types trait on our enum
+    impl Types for SigmaTestTypes {
+        type Val = SigmaTestVal;
+        type Sym = String;
+    }
+
+    // Implement sigma rules for our enum
+    impl SigmaRules for SigmaTestVal {
+        type Error = SigmaTestError;
+
+        fn unary(f: Self, x: Self) -> Result<Self, Self::Error> {
+            match (f, x) {
+                (Self::Not, Self::Prim(x)) => Ok(Self::Prim(!x)),
+                (Self::Not, _)             => Err(Self::Error::NotABool),
+                (Self::Prim(_),   _)       => Err(Self::Error::NotAnOperator),
+                _                          => Err(Self::Error::Arity),
+            }
+        }
+    }
+
+    #[test]
+    fn test_sigma_reduction() {
     }
 }
