@@ -50,16 +50,7 @@ fn debug<T: Debug>(prefix: &str, value: T) {
 pub trait SigmaRules: Sized {
     type Error: Sized + Debug + Default;
 
-    // open question how to properly abstract over arity
-    fn unary(_f: Self, _x: Self) -> Result<Self, Self::Error> {
-        Err(Self::Error::default())
-    }
-
-    fn binary(_f: Self, _x: Self, _y: Self) -> Result<Self, Self::Error> {
-        Err(Self::Error::default())
-    }
-
-    fn ternary(_f: Self, _x: Self, _y: Self) -> Result<Self, Self::Error> {
+    fn apply(_f: Self, _x: Self) -> Result<Self, Self::Error> {
         Err(Self::Error::default())
     }
 }
@@ -192,7 +183,12 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
         Box::new(Expr::App(func, arg))
     }
 
-    /* Reduce a reducible expression */
+    /* Reduce an expression tree
+     *
+     * This performs one reduction pass over the tree. The result
+     * itself might still be reducible (i.e., in the presence of
+     * recursion).
+     */
     pub fn reduce(self) -> ReduceResult<T> {
         match self {
             // We distinguish between beta and sigma reduction by
@@ -203,7 +199,7 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
                 Self::Val(v)       => Self::sigma_reduce(v, x),
                 _                  => Err(ReduceError::NotALambda),
             },
-            _ => Err(ReduceError::NotBetaReducible)
+            x => Ok(Box::new(x))
         }
     }
 
@@ -216,29 +212,21 @@ impl<'a, T: 'a> Expr<T> where T: Types + Clone {
             Self::App(f, x)                => Ok(Self::apply(
                 f.beta_reduce(var.clone(), exp.clone())?,
                 x.beta_reduce(var, exp)?)),
-            x                              => Ok(Box::new(x))
+            x => x.reduce()
         }
     }
 
     // Sigma reduction is delegated to the external value type, T::Val
-    //
-    // XXX: For now this only handles unary reduction. To be useful,
-    // we need to let the SigmaRules trait match on arbitrary
-    // expression patterns.
-    //
-    // Not sure how to do this, but maybe I'll get a brainwave at some
-    // point.
     fn sigma_reduce(func: T::Val, arg: Box<Self>) -> ReduceResult<T> {
         match *arg {
-            Self::Val(x) => T::Val::unary(func, x)
+            Self::Val(x) => T::Val::apply(func, x)
                 .map_or_else(
                     |e| Err(ReduceError::NotSigmaReducible(e)),
                     |v| Ok(Self::val(v))
                 ),
-            _ => {panic!("omg, multiple args! panic!");}
+            x => x.reduce()
         }
     }
-
 
     pub fn parse(
         input: impl Iterator<Item = &'a Token<T>>
@@ -388,22 +376,49 @@ mod tests {
     #[derive(Clone, Debug, PartialEq)]
     struct SigmaTestTypes;
 
-    // Note how the enum contains both values *and* operations.
-    #[derive(Copy, Clone, Debug, PartialEq)]
-    enum SigmaTestVal {
-        Prim(bool),
-        Not,
+    #[derive(Clone, Debug, PartialEq)]
+    enum BinOp {
         And,
         Or,
-        Xor,
+        Xor
     }
 
-    // This is optional, but you will thank yourself when things go
-    // bananas. Extra credit if you can figure out howto track source
-    // locations somehow.
+    // SigmaRules needs to form a category, where every operation maps
+    // back into the category (modulo errors, if the result would be
+    // nonsense).
     //
-    // Release mode can just use (), for undebuggable, unrecoverable
-    // errors.
+    // Note how the enum contains values, operations, and partial
+    // operations.
+    //
+    // What's the mathematical term for this? Totality?
+    //
+    // One way to make this a little less bonkers would be to
+    // distinguish between sigma functions and sigma values in the
+    // Expr ADT.
+    #[derive(Clone, Debug, PartialEq)]
+    enum SigmaTestVal {
+        // negation is the only unary operator here
+        Not,
+        // primative value
+        Prim(bool),
+        Binary(BinOp),
+        // paritially applied binary operator
+        Partial(BinOp, bool)
+    }
+
+    impl SigmaTestVal {
+        fn binary(op: BinOp, x: bool, y: bool) -> Self {
+            match op {
+                BinOp::And => Self::Prim(x && y),
+                BinOp::Or  => Self::Prim(x || y),
+                BinOp::Xor => Self::Prim(x ^  y),
+            }
+        }
+    }
+
+    // Meaningful errors are optional, but you will thank yourself
+    // when things go bananas. Extra credit if you can figure out how
+    // to track source locations somehow.
     #[derive(Debug)]
     enum SigmaTestError {
         NotImplemented,
@@ -427,42 +442,52 @@ mod tests {
     impl SigmaRules for SigmaTestVal {
         type Error = SigmaTestError;
 
-        fn unary(f: Self, x: Self) -> Result<Self, Self::Error> {
-            match (f, x) {
-                (Self::Not, Self::Prim(x)) => Ok(Self::Prim(!x)),
-                (Self::Not, _)             => Err(Self::Error::NotABool),
-                (Self::Prim(_),   _)       => Err(Self::Error::NotAnOperator),
-                _                          => Err(Self::Error::Arity),
-            }
-        }
-
-        fn binary(f: Self, x: Self, y: Self) -> Result<Self, Self::Error> {
+        fn apply(f: Self, x: Self) -> Result<Self, Self::Error> {
             use SigmaTestVal::*;
             use SigmaTestError::*;
-            match (f, x, y) {
-                (Prim(_), _, _)         => Err(NotAnOperator),
-                (Not, _, _)             => Err(Arity),
-                (And, Prim(x), Prim(y)) => Ok(Prim(x && y)),
-                (Or,  Prim(x), Prim(y)) => Ok(Prim(x || y)),
-                (Xor, Prim(x), Prim(y)) => Ok(Prim(x ^  y)),
-                _                       => Err(NotABool),
+            // This is the key thing, binary operations return a
+            // partial with their inner argument.
+            // Only when we apply a partial to its second value do
+            // we get a result.
+            match (f, x) {
+                (Not,                 Prim(x)) => Ok(Prim(!x)),
+                (Not,                 _)       => Err(NotABool),
+                (Binary(o),           Prim(x)) => Ok(Partial(o, x)),
+                (Partial(o, v),       Prim(x)) => Ok(Self::binary(o, v, x)),
+                (Prim(_),          _      )    => Err(NotAnOperator),
+                _ => Err(NotImplemented),
             }
         }
-
-        // ternary ... ? etc.  This pattern obviously doesn't scale,
-        // but I'm not sure how to do something better within the
-        // limits of what I know about rust.
-
     }
 
     #[test]
     fn test_sigma_reduction() {
         type E = Expr<SigmaTestTypes>;
         use SigmaTestVal::*;
+        use BinOp::*;
 
         assert_eq!(
             E::apply(E::val(Not), E::val(Prim(true))).reduce().unwrap(),
             E::val(Prim(false))
         );
+
+        assert_eq!(
+            E::apply(E::val(Binary(And)), E::val(Prim(true))).reduce().unwrap(),
+            E::val(Partial(And, true))
+        );
+
+        assert_eq!(
+            E::apply(E::val(Partial(And, true)), E::val(Prim(true))).reduce().unwrap(),
+            E::val(Prim(true))
+        );
+
+        /*
+        assert_eq!(
+            E::apply(
+                E::apply(E::val(Binary(Xor)), E::val(Prim(true))),
+                E::val(Prim(true))).reduce().unwrap(),
+            E::val(Prim(false))
+        );*/
+
     }
 }
