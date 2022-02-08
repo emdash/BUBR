@@ -24,7 +24,7 @@
 //
 // Fork this project to create your own MIT license that you can
 // always link to.
-use crate::{Types, SigmaRules};
+use crate::{Types};
 
 
 /**
@@ -44,22 +44,61 @@ enum Term<T: Types> {
 }
 
 /* ADT For rewrite rules */
-struct Rule<T: Types>(Lhs<T>, Rhs<T>);
-struct Lhs<T: Types>(T::Val, Vec<Term<T>>);
-struct Rhs<T: Types>(Term<T>);
+struct Rule<T: Types>(
+    T::Val, Vec<Term<T>>, // Left hand side
+    Vec<Term<T>>          // Right hand side
+);
 
-/* With the above in hand, TRS is simply a set of rules. */
-/* Here we just represent it as a vec. */
-struct TRS<T: Types>(Vec<Rule<T>>);
-
+/* With the above in hand, TRS is simply a list of rules. */
+struct TermReductionSystem<T: Types>(Vec<Rule<T>>);
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{SigmaRules, Types};
+
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum Symbols {
+        X,
+        Y,
+        Z,
+        A,
+        B,
+        C
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum Values {
+        If,
+        True,
+        False
+    }
+
+    impl SigmaRules for Values {
+        type Error = ();
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    struct TestTrsTypes;
+
+    impl Types for TestTrsTypes {
+        type Sym = Symbols;
+        type Val = Values;
+    }
+
+    type TestTrs = TermReductionSystem<TestTrsTypes>;
 
     #[test]
     fn test_hello() {
+        use Symbols::*;
+        use Values::*;
+        use Term::*;
+
+        let trs: TestTrs = TermReductionSystem(vec![
+            Rule(If, vec![Const(True),  Var(X), Var(Y)], vec![Var(X)]),
+            Rule(If, vec![Const(False), Var(X), Var(Y)], vec![Var(Y)]),
+        ]);
         assert!(true);
     }
 }
