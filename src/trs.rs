@@ -58,23 +58,20 @@ mod tests {
     use super::*;
     use crate::{SigmaRules, Types};
 
+    // We can get away with a limited alphabet of identifiers for
+    // tests. Thes are lower-case to match the literature. Variables
+    // in rules are typically lower case, while constants are
+    // CamelCase or just a capital letter.
+    #[allow(non_camel_case_types)]
     #[derive(Copy, Clone, Debug, PartialEq)]
-    enum Symbols {
-        X,
-        Y,
-        Z,
-        A,
-        B,
-        C
-    }
+    enum Symbols {x, y}
 
+    // We can get away with a limited set of "constant" values as
+    // well.
     #[derive(Copy, Clone, Debug, PartialEq)]
-    enum Values {
-        If,
-        True,
-        False
-    }
+    enum Values {If, True, False, Int(i8), F, G, W}
 
+    // We can punt on sigma rules for now.
     impl SigmaRules for Values {
         type Error = ();
     }
@@ -90,14 +87,24 @@ mod tests {
     type TestTrs = TermReductionSystem<TestTrsTypes>;
 
     #[test]
-    fn test_hello() {
+    fn test_rules() {
         use Symbols::*;
         use Values::*;
         use Term::*;
 
+        // Example from the book
         let trs: TestTrs = TermReductionSystem(vec![
-            Rule(If, vec![Const(True),  Var(X), Var(Y)], vec![Var(X)]),
-            Rule(If, vec![Const(False), Var(X), Var(Y)], vec![Var(Y)]),
+            // LHS                                       RHS
+            Rule(If, vec![Const(True),  Var(x), Var(y)], vec![Var(x)]),
+            Rule(If, vec![Const(False), Var(x), Var(y)], vec![Var(y)]),
+        ]);
+
+        // Another example from the book.
+        let trs: TestTrs = TermReductionSystem(vec![
+            // LHS                                         RHS
+            Rule(F, vec![Const(F), Var(x), Const(Int(0))], vec![Const(Int(1))]),
+            Rule(G, vec![],                                vec![Const(Int(1))]),
+            Rule(W, vec![Const(W)],                        vec![Const(W)])
         ]);
         assert!(true);
     }
