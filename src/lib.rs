@@ -37,8 +37,9 @@ use core::fmt::Debug;
 /**
  * Should this be its own crate? Or a macro?
  */
-pub fn debug<T: Debug>(prefix: &str, value: T) {
-    eprintln!("{}: {:?}", prefix, value);
+pub fn debug<T: Debug>(prefix: &str, value: T) -> T {
+    println!("{}: {:?}", prefix, value);
+    value
 }
 
 
