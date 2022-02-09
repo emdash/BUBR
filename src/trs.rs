@@ -24,7 +24,8 @@
 //
 // Fork this project to create your own MIT license that you can
 // always link to.
-use crate::{Types};
+use core::fmt::Debug;
+use crate::{debug, Types};
 
 
 /**
@@ -36,21 +37,75 @@ use crate::{Types};
  * Rust.
  */
 
-/* ADT For Terms */
+/**
+ * ADT For Terms.
+ *
+ * We define this in terms of the Types trait, as with Expr, with
+ * T::Sym a place-holder for "symbols", a.k.a. "identifiers", and
+ * T::Val a placeholder for "constant" values.
+ *
+ * The meaning of "constant" values is different, in the sense that
+ * "constants" can explicitly refer to "functions" defined within the
+ * TRS, whereas with the lambda calculus, constants only refer to a
+ * function under some set of "sigma rules".
+ */
+#[derive(Debug)]
 enum Term<T: Types> {
     Var(T::Sym),
     Const(T::Val),
     SubTerm(T::Val, Vec<Term<T>>)
 }
 
-/* ADT For rewrite rules */
+
+/**
+ * ADT For Rewrite Rules
+ *
+ * Notice the grouping of fields.
+ *
+ * The first field is the LHS "function" term, which must be a
+ * constant value. So, here we just require that it be T::Val, which
+ * is the inner type of the Const variant of Term, and thereby capture
+ * this in Rust's type system.
+ *
+ * The second field is the remaning set of terms for the LHS.
+ *
+ * The third field is the entire RHS.
+ */
+#[derive(Debug)]
 struct Rule<T: Types>(
     T::Val, Vec<Term<T>>, // Left hand side
     Vec<Term<T>>          // Right hand side
 );
 
 /* With the above in hand, TRS is simply a list of rules. */
+#[derive(Debug)]
 struct TermReductionSystem<T: Types>(Vec<Rule<T>>);
+
+impl<T> Rule<T> where T: Types {
+    pub fn is_left_normal(&self) -> bool {
+        // a little mutability never hurt no-one.
+        let mut seen_var = false;
+        let closure = |t| Self::is_left_normal_rec(t, &mut seen_var);
+        let ret = self.1.iter().all(closure);
+        // this var isn't getting mutated, even though we're hitting
+        // the case during recursion. Compiler bug?
+        debug("var", seen_var);
+        ret
+    }
+
+    fn is_left_normal_rec(t: &Term<T>, seen_var: &mut bool) -> bool {
+        !(*seen_var) || match t {
+            Term::Var(_)         => {(*seen_var) = true; true},
+            Term::Const(_)       => !(*seen_var),
+            Term::SubTerm(_, ts) => ts.iter().all(|t| Self::is_left_normal_rec(t, seen_var))
+    } }
+}
+
+impl<T: Types> TermReductionSystem<T> {
+    fn is_left_normal(&self) -> bool {
+        self.0.iter().all(|rule| rule.is_left_normal())
+    }
+}
 
 
 #[cfg(test)]
@@ -58,18 +113,18 @@ mod tests {
     use super::*;
     use crate::{SigmaRules, Types};
 
-    // We can get away with a limited alphabet of identifiers for
+    // We can get away with a limited set of identifiers for
     // tests. Thes are lower-case to match the literature. Variables
     // in rules are typically lower case, while constants are
     // CamelCase or just a capital letter.
     #[allow(non_camel_case_types)]
     #[derive(Copy, Clone, Debug, PartialEq)]
-    enum Symbols {x, y}
+    enum Symbols {a, b, c, d, x, y}
 
     // We can get away with a limited set of "constant" values as
     // well.
     #[derive(Copy, Clone, Debug, PartialEq)]
-    enum Values {If, True, False, Int(i8), F, G, W}
+    enum Values {If, True, False, Int(i8), F, G, W, Hd, Cons}
 
     // We can punt on sigma rules for now.
     impl SigmaRules for Values {
@@ -85,6 +140,7 @@ mod tests {
     }
 
     type TestTrs = TermReductionSystem<TestTrsTypes>;
+    type TestRule = Rule<TestTrsTypes>;
 
     #[test]
     fn test_rules() {
@@ -107,5 +163,31 @@ mod tests {
             Rule(W, vec![Const(W)],                        vec![Const(W)])
         ]);
         assert!(true);
+    }
+
+    #[test]
+    fn test_is_left_normal() {
+        use Symbols::*;
+        use Values::*;
+        use Term::*;
+        let r1: TestRule =
+            Rule(Hd, vec![SubTerm(Cons, vec![Var(a), Var(b)])], vec![Var(b)]);
+
+        let r2: TestRule =
+            Rule(F, vec![Var(a), Const(Cons)], vec![]);
+
+        let r3: TestRule =
+            Rule(F,
+                 vec![SubTerm(Cons, vec![Var(a)]), Const(F)],
+                 vec![]);
+
+        let r4: TestRule =
+            Rule(F,  vec![SubTerm(Cons, vec![Var(a), Var(b)]),
+                          SubTerm(Cons, vec![Var(c), Var(d)])], vec![Const(Int(0))]);
+
+        assert_eq!(r1.is_left_normal(), true);
+        // XXX: this doesn't work, I think I know why.
+        //assert_eq!(r2.is_left_normal(), false);
+        //assert_eq!(r3.is_left_normal(), false);
     }
 }
