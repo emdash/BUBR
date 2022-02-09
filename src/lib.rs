@@ -86,8 +86,7 @@ pub trait Types {
  * if S is `&'static str`.
  */
 #[derive(Clone, Debug)]
-pub enum Token<T: Types>
-{
+pub enum Token<T: Types> {
     Id(T::Sym),
     Val(T::Val),
     Lambda,
@@ -107,3 +106,4 @@ impl<T: Types> Token<T> {
  */
 mod expr;
 mod trs;
+mod grs;
