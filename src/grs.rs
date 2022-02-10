@@ -24,8 +24,9 @@
 //
 // Fork this project to create your own MIT license that you can
 // always link to.
-use core::fmt::Debug;
-use crate::{debug, Types};
+use std::collections::HashMap;
+use core::hash::Hash;
+use crate::{Types};
 
 
 /**
@@ -38,7 +39,7 @@ use crate::{debug, Types};
 /**
  * ADT for canonical form GRS
  */
-enum CanonicalTerm<ID, V> {
+enum CanonicalTerm<ID: Copy, V> {
     Id(ID),
     Constructor(V),
 }
@@ -47,8 +48,8 @@ enum CanonicalTerm<ID, V> {
 /**
  * A node in a canonical graph.
  */
-struct CanonicalNode<ID, V> {
-    id: ID,
+struct CanonicalNode<ID: Copy + Eq + Hash, V> {
+    id: ID, // XXX: do we need this?
     function: V,
     rest: Vec<CanonicalTerm<ID, V>>
 }
@@ -57,8 +58,32 @@ struct CanonicalNode<ID, V> {
 /**
  * A canonical graph is an ordered set of nodes.
  */
-struct CanonicalGraph<ID, V>(Vec<CanonicalNode<ID, V>>);
+struct CanonicalGraph<ID: Copy + Eq + Hash, V> {
+    ordering: Vec<ID>,
+    mapping: HashMap<ID, CanonicalNode<ID, V>>
+}
 
+impl<ID: Copy + Eq + Hash, V> CanonicalGraph<ID, V> {
+    pub fn new(nodes: Vec<CanonicalNode<ID, V>>) -> Self {
+        let mut ordering = Vec::new();
+        let mut mapping = HashMap::new();
+
+        for node in nodes {
+            ordering.push(node.id);
+            mapping.insert(node.id, node);
+        }
+
+        CanonicalGraph { ordering, mapping }
+    }
+
+    pub fn root(&self) -> &CanonicalNode<ID, V> {
+        &self.mapping[&self.ordering[0]]
+    }
+
+    pub fn get(&self, id: ID) -> Option<&CanonicalNode<ID, V>> {
+        self.mapping.get(&id)
+    }
+}
 
 /**
  * A rewrite rule in canonical form.
@@ -68,8 +93,11 @@ struct CanonicalGraph<ID, V>(Vec<CanonicalNode<ID, V>>);
  *
  * We could add an Id field to types, but this requires every
  * implementation define this type, even if they don't use it.
+ *
+ * We also introduce the additional bound that T::Sym be Copy, since
+ * it's used for node ids. We don't want to take it by move.
  */
-struct CanonicalRule<T: Types> {
+struct CanonicalRule<T: Types> where T::Sym: Copy + Eq + Hash {
     redex: CanonicalGraph<T::Sym, T::Val>,
     contractum: CanonicalGraph<T::Sym, T::Val>,
     redirection: (T::Sym, T::Sym)
@@ -79,13 +107,30 @@ struct CanonicalRule<T: Types> {
 /**
  * A Graph Rewriting System (GRS) is an ordered set of rules.
  */
-struct CanonicalGRS<T: Types>(Vec<CanonicalRule<T>>);
+struct CanonicalGRS<T: Types>(Vec<CanonicalRule<T>>) where T::Sym: Copy + Eq + Hash;
+
+
+type DataGraph<ID, T: Types> = CanonicalGraph<ID, T::Val>;
 
 
 /**
- * ADT for the data on which a GRS operates.
+ * Given a pattern and a subgraph rooted at data_root, find find an
+ * assignment of the pattern variables that satisfies the pattern, if
+ * possible.
  */
-struct DataGraph<ID, T: Types>(CanonicalGraph<ID, T::Val>);
+fn matches<ID: Copy + Eq + Hash, T: Types>(
+    pattern: &CanonicalRule<T>,
+    data: &DataGraph<ID, T>,
+    data_root: ID,
+    mapping: Option<Vec<(T::Sym, ID)>>
+) -> Option<Vec<(T::Sym, ID)>> where T:: Sym: Copy + Eq + Hash {
+    let mut mapping = mapping.unwrap_or(Vec::new());
+/*    match (pattern.redex.root(), data.get(data_root)?) {
+        
+    }*/
+
+    Some(mapping)
+}
 
 
 #[cfg(test)]
@@ -98,7 +143,7 @@ mod tests {
     // in rules are typically lower case, while constants are
     // CamelCase or just a capital letter.
     #[allow(non_camel_case_types)]
-    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
     enum Symbols {a, b, c, d, m, n, o, x, y, z}
 
     // We can get away with a limited set of "constant" values as
@@ -138,7 +183,7 @@ mod tests {
         // x: Start   -> m: Add n o, n: Succ o, o: Zero, x := m
         let trs: TestGrs = CanonicalGRS(vec![
             CanonicalRule {
-                redex: CanonicalGraph(vec![
+                redex: CanonicalGraph::new(vec![
                     CanonicalNode {
                         id: x,
                         function: Add,
@@ -149,10 +194,10 @@ mod tests {
                         rest: vec![]
                     },
                 ]),
-                contractum: CanonicalGraph(vec![]),
+                contractum: CanonicalGraph::new(vec![]),
                 redirection: (x, z)
             }, CanonicalRule {
-                redex: CanonicalGraph(vec![
+                redex: CanonicalGraph::new(vec![
                     CanonicalNode {
                         id: x,
                         function: Add,
@@ -163,7 +208,7 @@ mod tests {
                         rest: vec![Id(a)],
                     }
                 ]),
-                contractum: CanonicalGraph(vec![
+                contractum: CanonicalGraph::new(vec![
                     CanonicalNode {
                         id: m,
                         function: Succ,
@@ -176,14 +221,14 @@ mod tests {
                 ]),
                 redirection: (x, m)
             },CanonicalRule {
-                redex: CanonicalGraph(vec![
+                redex: CanonicalGraph::new(vec![
                     CanonicalNode {
                         id: x,
                         function: Start,
                         rest: vec![]
                     },
                 ]),
-                contractum: CanonicalGraph(vec![
+                contractum: CanonicalGraph::new(vec![
                     CanonicalNode {
                         id: m,
                         function: Add,
