@@ -26,6 +26,7 @@
 // always link to.
 use std::collections::HashMap;
 use core::hash::Hash;
+use core::fmt::Debug;
 use crate::{Types};
 
 
@@ -39,7 +40,8 @@ use crate::{Types};
 /**
  * ADT for canonical form GRS
  */
-enum CanonicalTerm<ID: Copy, V> {
+#[derive(Debug)]
+enum CanonicalTerm<ID: Copy + Debug, V: Debug> {
     Id(ID),
     Constructor(V),
 }
@@ -48,7 +50,8 @@ enum CanonicalTerm<ID: Copy, V> {
 /**
  * A node in a canonical graph.
  */
-struct CanonicalNode<ID: Copy + Eq + Hash, V> {
+#[derive(Debug)]
+struct CanonicalNode<ID: Copy + Eq + Hash + Debug, V: Debug> {
     id: ID, // XXX: do we need this?
     function: V,
     rest: Vec<CanonicalTerm<ID, V>>
@@ -58,12 +61,13 @@ struct CanonicalNode<ID: Copy + Eq + Hash, V> {
 /**
  * A canonical graph is an ordered set of nodes.
  */
-struct CanonicalGraph<ID: Copy + Eq + Hash, V> {
+#[derive(Debug)]
+struct CanonicalGraph<ID: Copy + Eq + Hash + Debug, V: Debug> {
     ordering: Vec<ID>,
     mapping: HashMap<ID, CanonicalNode<ID, V>>
 }
 
-impl<ID: Copy + Eq + Hash, V> CanonicalGraph<ID, V> {
+impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
     pub fn new(nodes: Vec<CanonicalNode<ID, V>>) -> Self {
         let mut ordering = Vec::new();
         let mut mapping = HashMap::new();
@@ -118,39 +122,63 @@ type DataGraph<ID, T: Types> = CanonicalGraph<ID, T::Val>;
  * assignment of the pattern variables that satisfies the pattern, if
  * possible.
  */
-fn matches<ID: Copy + Eq + Hash, T: Types>(
+fn matches<ID: Copy + Eq + Hash + Debug, T: Types>(
     pattern: &CanonicalRule<T>,
     pattern_root: T::Sym,
     data: &DataGraph<ID, T>,
     data_root: ID,
     mapping: Option<Vec<(T::Sym, ID)>>
-) -> Option<Vec<(T::Sym, ID)>> where T:: Sym: Copy + Eq + Hash, T::Val: PartialEq {
-    let mut mapping = mapping.unwrap_or(Vec::new());
+) -> Option<Vec<(T::Sym, ID)>>
+where T::Sym: Copy + Eq + Hash + Debug,
+      T::Val: PartialEq + Debug
+{
     use CanonicalNode as N;
     use CanonicalTerm::*;
 
-    match (pattern.redex.get(pattern_root)?, data.get(data_root)?) {
-        (N {function: x, id: var, rest: sp},
-         N {function: y, id: id,  rest: sd}) if x == y => {
-            mapping.push((*var, *id));
-            // loop over the rest of the pattern
-            for (pat, node) in sp.iter().zip(sd.iter()) { match (pat, node) {
-                (Id(v), Id(i)) => {
-                    // bind the pattern var to the corresponding id
-                    // XXX: duplicates would be an error of the IDs don't match!
-                    mapping.push((*v, *i));
-                    // ensure the sub-terms also match
+    println!("enter: {:?}, {:?}", pattern_root, data_root);
+
+    let N {function: x, id: var, rest: sp} = pattern.redex.get(pattern_root)?;
+    let N {function: y, id: id,  rest: sd} = data.get(data_root)?;
+    let mut mapping = mapping.unwrap_or(Vec::new());
+
+    println!("check: {:?}, {:?}", x, y);
+
+    if x == y {
+        println!("bind: {:?}, {:?}", *var, *id);
+        mapping.push((*var, *id));
+        // loop over the rest of the pattern
+        for (pat, node) in sp.iter().zip(sd.iter()) { match (pat, node) {
+            (Id(v), Id(i)) => {
+                println!("bind-rec: {:?}, {:?}", *v, *i);
+
+                if let Some(_) = pattern.redex.get(*v) {
+                    // ensure non-empty sub-terms also match.
+                    // don't bind before-hand, matches will do this for us.
                     mapping = matches(pattern, *v, data, *i, Some(mapping))?;
-                },
+                } else {
+                    // just bind the pattern so it can be used for substitution.
+                    mapping.push((*v, *i));
+                }
 
-                // Ensure two constructors are the same.
-                (Constructor(x), Constructor(y)) if x == y => (),
+                println!("recurse-done {:?}", mapping);
+            },
 
-                _ => {return None}
-                //mapping = matches_term(pat, node, mapping)?;
-            } }
-            Some(mapping)
-        }, _ => None
+            // Ensure two constructors are the same.
+            (Constructor(x), Constructor(y)) if x == y => (),
+
+            // Early return if any subterms fail to match
+            (x, y) => {
+                println!("fail: {:?} != {:?}", x, y);
+                return None
+            }
+            //mapping = matches_term(pat, node, mapping)?;
+        } }
+
+        println!("success: {:?}", mapping);
+        Some(mapping)
+    } else {
+        println!("fail: {:?} != {:?}", x, y);
+        None
     }
 }
 
@@ -203,7 +231,7 @@ mod tests {
         // y: Succ a  -> m: Succ n, n: Add a z, x := m
         //
         // x: Start   -> m: Add n o, n: Succ o, o: Zero, x := m
-        let trs: TestGrs = CanonicalGRS(vec![
+        let grs: TestGrs = CanonicalGRS(vec![
             CanonicalRule {
                 redex: CanonicalGraph::new(vec![
                     CanonicalNode {
@@ -211,7 +239,7 @@ mod tests {
                         function: Add,
                         rest: vec![Id(y), Id(z)],
                     }, CanonicalNode {
-                        id: y,
+                        id: z,
                         function: Zero,
                         rest: vec![]
                     },
@@ -269,6 +297,41 @@ mod tests {
             },
         ]);
 
-        assert!(true);
+
+        let data = CanonicalGraph::new(vec![
+            CanonicalNode {
+                id: 0,
+                function: Add,
+                rest: vec![Id(1), Id(1)]
+            }, CanonicalNode {
+                id: 1,
+                function: Zero,
+                rest: vec![]
+            }
+        ]);
+
+        assert_eq!(
+            matches(
+                &grs.0[0],
+                x,
+                &data,
+                0,
+                None
+            ), Some(vec![
+                (x, 0),
+                (y, 1),
+                (z, 1)
+            ])
+        );
+
+        assert_eq!(
+            matches(
+                &grs.0[1],
+                x,
+                &data,
+                0,
+                None
+            ), None
+        );
     }
 }
