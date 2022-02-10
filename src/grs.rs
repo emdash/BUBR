@@ -120,16 +120,38 @@ type DataGraph<ID, T: Types> = CanonicalGraph<ID, T::Val>;
  */
 fn matches<ID: Copy + Eq + Hash, T: Types>(
     pattern: &CanonicalRule<T>,
+    pattern_root: T::Sym,
     data: &DataGraph<ID, T>,
     data_root: ID,
     mapping: Option<Vec<(T::Sym, ID)>>
-) -> Option<Vec<(T::Sym, ID)>> where T:: Sym: Copy + Eq + Hash {
+) -> Option<Vec<(T::Sym, ID)>> where T:: Sym: Copy + Eq + Hash, T::Val: PartialEq {
     let mut mapping = mapping.unwrap_or(Vec::new());
-/*    match (pattern.redex.root(), data.get(data_root)?) {
-        
-    }*/
+    use CanonicalNode as N;
+    use CanonicalTerm::*;
 
-    Some(mapping)
+    match (pattern.redex.get(pattern_root)?, data.get(data_root)?) {
+        (N {function: x, id: var, rest: sp},
+         N {function: y, id: id,  rest: sd}) if x == y => {
+            mapping.push((*var, *id));
+            // loop over the rest of the pattern
+            for (pat, node) in sp.iter().zip(sd.iter()) { match (pat, node) {
+                (Id(v), Id(i)) => {
+                    // bind the pattern var to the corresponding id
+                    // XXX: duplicates would be an error of the IDs don't match!
+                    mapping.push((*v, *i));
+                    // ensure the sub-terms also match
+                    mapping = matches(pattern, *v, data, *i, Some(mapping))?;
+                },
+
+                // Ensure two constructors are the same.
+                (Constructor(x), Constructor(y)) if x == y => (),
+
+                _ => {return None}
+                //mapping = matches_term(pat, node, mapping)?;
+            } }
+            Some(mapping)
+        }, _ => None
+    }
 }
 
 
