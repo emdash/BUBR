@@ -38,17 +38,6 @@ use crate::SigmaRules;
 
 
 /**
- * This is like the one in lib.rs, but we add some extra bounds, and
- * one extra associated type.
- */
-trait Types {
-    type Val: Debug + Clone + SigmaRules + PartialEq + Eq;
-    type Id: Debug + Clone + Eq + Copy + Hash + PartialEq;
-    type Var: Debug + Clone + Eq + Copy + Hash;
-}
-
-
-/**
  * ADT for canonical form GRS
  */
 #[derive(Debug)]
@@ -77,6 +66,34 @@ struct CanonicalGraph<ID: Copy + Eq + Hash + Debug, V: Debug> {
     ordering: Vec<ID>,
     mapping: HashMap<ID, CanonicalNode<ID, V>>
 }
+
+
+/**
+ * This is like the one in lib.rs, but we add some extra bounds, and
+ * one extra associated type.
+ */
+trait Types {
+    type Val: Debug + Clone + SigmaRules + PartialEq + Eq;
+    type Id: Debug + Clone + Eq + Copy + Hash + PartialEq;
+    type Var: Debug + Clone + Eq + Copy + Hash;
+}
+
+
+/**
+ * Some helpful type aliases to keep function signatures clean.
+ *
+ * We deliberately distinguish between pattern nodes and data nodes
+ * at the type level.
+ */
+type NodeRef    <'a, ID, V>    = (&'a CanonicalGraph<ID, V>, ID);
+type DataNode   <    T: Types> = CanonicalNode <    T::Id,  T::Val>;
+type DataRef    <'a, T: Types> = NodeRef       <'a, T::Id,  T::Val>;
+type DataGraph  <    T: Types> = CanonicalGraph<    T::Id,  T::Val>;
+type PatternNode<    T: Types> = CanonicalNode <    T::Var, T::Val>;
+type PatternRef <'a, T: Types> = NodeRef       <'a, T::Var, T::Val>;
+type Pattern    <    T: Types> = CanonicalGraph<    T::Var, T::Val>;
+type Mapping    <    T: Types> = HashMap       <    T::Var, T::Id>;
+
 
 impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
     pub fn new(nodes: Vec<CanonicalNode<ID, V>>) -> Self {
@@ -115,7 +132,7 @@ impl<T: Types> CanonicalRule<T> {
      * mapping of variables to node ideas..
      */
     pub fn matches(&self, node: DataRef<T>) -> Option<Mapping<T>> {
-        let DataRef(data, data_root) = node;
+        let (data, data_root) = node;
         self.matches_rec(self.redex.root(), data, data_root, HashMap::new())
     }
 
@@ -150,7 +167,7 @@ impl<T: Types> CanonicalRule<T> {
                     if let Some(_) = self.redex.get(*v) {
                         // ensure non-empty sub-terms also match.
                         // don't bind before-hand, matches will do this for us.
-                        mapping = matches(self, *v, data, *i, Some(mapping))?;
+                        mapping = self.matches_rec(*v, data, *i, mapping)?;
                     } else {
                         // just bind the id in the mapping.
                         mapping.insert(*v, *i);
@@ -180,82 +197,7 @@ impl<T: Types> CanonicalRule<T> {
 }
 
 
-
-/**
- * A Graph Rewriting System (GRS) is an ordered set of rules.
- */
 struct CanonicalGRS<T: Types>(Vec<CanonicalRule<T>>);
-type DataGraph<T: Types> = CanonicalGraph<T::Id, T::Val>;
-type Mapping<T: Types> = HashMap<T::Var, T::Id>;
-
-
-/**
- * A reference to a node in a data graph.
- */
-struct DataRef<'a, T: Types>(&'a DataGraph<T>, T::Id);
-
-
-/**
- * Given a pattern and a subgraph rooted at data_root, find find an
- * assignment of the pattern variables that satisfies the pattern, if
- * possible.
- */
-fn matches<T: Types>(
-    pattern: &CanonicalRule<T>,
-    pattern_root: T::Var,
-    data: &DataGraph<T>,
-    data_root: T::Id,
-    mapping: Option<Mapping<T>>
-) -> Option<Mapping<T>> {
-    use CanonicalNode as N;
-    use CanonicalTerm::*;
-
-    println!("enter: {:?}, {:?}", pattern_root, data_root);
-
-    let N {function: x, id: var, rest: sp} = pattern.redex.get(pattern_root)?;
-    let N {function: y, id: id,  rest: sd} = data.get(data_root)?;
-    let mut mapping = mapping.unwrap_or(HashMap::new());
-
-    println!("check: {:?}, {:?}", x, y);
-
-    if x == y {
-        println!("bind: {:?}, {:?}", *var, *id);
-        mapping.insert(*var, *id);
-        // loop over the rest of the pattern
-        for (pat, node) in sp.iter().zip(sd.iter()) { match (pat, node) {
-            (Id(v), Id(i)) => {
-                println!("bind-rec: {:?}, {:?}", *v, *i);
-
-                if let Some(_) = pattern.redex.get(*v) {
-                    // ensure non-empty sub-terms also match.
-                    // don't bind before-hand, matches will do this for us.
-                    mapping = matches(pattern, *v, data, *i, Some(mapping))?;
-                } else {
-                    // just bind the id in the mapping.
-                    mapping.insert(*v, *i);
-                }
-
-                println!("recurse-done {:?}", mapping);
-            },
-
-            // Ensure two constructors are the same.
-            (Constructor(x), Constructor(y)) if x == y => (),
-
-            // Early return if any subterms fail to match
-            (x, y) => {
-                println!("fail: {:?} != {:?}", x, y);
-                return None
-            }
-            //mapping = matches_term(pat, node, mapping)?;
-        } }
-
-        println!("success: {:?}", mapping);
-        Some(mapping)
-    } else {
-        println!("fail: {:?} != {:?}", x, y);
-        None
-    }
-}
 
 
 macro_rules! node {
@@ -371,7 +313,7 @@ mod tests {
         ];
 
         assert_eq!(
-            grs.0[0].matches(DataRef(&data, 0)),
+            grs.0[0].matches((&data, 0)),
             Some(HashMap::from([
                 (x, 0),
                 (y, 1),
@@ -380,13 +322,8 @@ mod tests {
         );
 
         assert_eq!(
-            matches(
-                &grs.0[1],
-                x,
-                &data,
-                0,
-                None
-            ), None
+            grs.0[1].matches((&data, 0)),
+            None
         );
     }
 }
