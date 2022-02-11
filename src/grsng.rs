@@ -53,7 +53,7 @@ trait Types {
 
 // Helper traits. This lets us re-use these bounds in the few places
 // where we can't refer to T::Foo directly.
-trait Value: Debug + Copy + SigmaRules {}
+trait Value: Debug + Copy + PartialEq + SigmaRules {}
 trait NodeId: Debug + Copy + PartialEq {}
 trait Variable: Debug + Copy + PartialEq {}
 
@@ -61,7 +61,7 @@ trait Variable: Debug + Copy + PartialEq {}
 /**
  * This trait maps vars to IDs for rule rewriting.
  */
-trait Mapping<T: Types> {
+trait Mapping<T: Types>: Debug {
     fn get(&self, var: T::Var) -> T::Val;
     fn merge(self, other: Self) -> Self;
     fn bind(var: T::Var, id: T::Id) -> Self;
@@ -69,21 +69,11 @@ trait Mapping<T: Types> {
 
 
 /**
- * A term in canonical form is either a variable or a constant.
- */
-#[derive(Debug, Copy, Clone)]
-enum CanonicalTerm<ID: Copy, T: Types> {
-    Var(ID),
-    Const(T::Val),
-}
-
-
-/**
  * Abstract over mutable runtime data representations.
  */
 trait DataGraph<T: Types> {
-    type It: Iterator<Item=CanonicalTerm<T::Id, T>>;
-    fn value<'a>(&self, id: T::Id) -> &'a T::Val;
+    type It: Iterator<Item=T::Id>;
+    fn value(&self, id: T::Id) -> T::Val;
     fn children(&self, id: T::Id) -> Self::It;
     fn insert(self, id: T::Id, func: T::Val, rest: Self::It) -> Self;
     fn root(&self) -> T::Id;
@@ -95,13 +85,45 @@ trait DataGraph<T: Types> {
  * Abstract over immutable runtime pattern representations.
  */
 trait Pattern<T: Types> {
-    type It: Iterator<Item=CanonicalTerm<T::Var, T>>;
+    type It: Iterator<Item=T::Var>;
     type Mp: Mapping<T>;
-    fn value<'a>(&self, id: T::Var) -> &'a T::Val;
+
+    fn contains(&self, id: T::Var) -> bool;
+    fn value<'a>(&self, id: T::Var) -> T::Val;
     fn children(&self, id: T::Var) -> Self::It;
     fn root(&self) -> T::Id;
-    fn matches(&self, data: &impl DataGraph<T>) -> Option<Self::Mp> {
-        None
+
+    fn matches(
+        &self,
+        redex: T::Var,
+        node: T::Id,
+        data: &impl DataGraph<T>
+    ) -> Option<Self::Mp> {
+        println!("enter: {:?}, {:?}", redex, node);
+
+        let redex_value = self.value(redex);
+        let node_value = data.value(node);
+
+        if redex_value == node_value {
+            println!("bind: {:?} -> {:?}", redex, node);
+            let mut mapping = Self::Mp::bind(redex, node);
+
+            for (var, id) in self.children(redex).zip(data.children(node)) {
+                println!("bind-rec: {:?}, {:?}", var, id);
+                if self.contains(var) {
+                    mapping = mapping.merge(self.matches(var, id, data)?);
+                } else {
+                    mapping = Self::Mp::bind(var, id);
+                }
+                println!("recurse-done {:?}", mapping);
+            }
+
+            println!("success: {:?}", mapping);
+            Some(mapping)
+        } else {
+            println!("fail: {:?} != {:?}", redex_value, node_value);
+            None
+        }
     }
 }
 
