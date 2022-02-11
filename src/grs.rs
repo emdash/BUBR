@@ -63,7 +63,7 @@ enum CanonicalTerm<ID: Copy + Debug, V: Debug> {
  */
 #[derive(Debug)]
 struct CanonicalNode<ID: Copy + Eq + Hash + Debug, V: Debug> {
-    id: ID, // XXX: do we need this?
+    id: ID,
     function: V,
     rest: Vec<CanonicalTerm<ID, V>>
 }
@@ -91,9 +91,7 @@ impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
         CanonicalGraph { ordering, mapping }
     }
 
-    pub fn root(&self) -> &CanonicalNode<ID, V> {
-        &self.mapping[&self.ordering[0]]
-    }
+    pub fn root(&self) -> ID { self.ordering[0] }
 
     pub fn get(&self, id: ID) -> Option<&CanonicalNode<ID, V>> {
         self.mapping.get(&id)
@@ -103,12 +101,6 @@ impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
 
 /**
  * A rewrite rule in canonical form.
- *
- * Notice here we preserve the ID type parameter, since client code
- * might wish control over node id type.
- *
- * We could add an Id field to types, but this requires every
- * implementation define this type, even if they don't use it.
  */
 struct CanonicalRule<T: Types> {
     redex: CanonicalGraph<T::Var, T::Val>,
@@ -117,12 +109,90 @@ struct CanonicalRule<T: Types> {
 }
 
 
+impl<T: Types> CanonicalRule<T> {
+    /**
+     * If a rule matches the subgraph rooted at `node`, return the
+     * mapping of variables to node ideas..
+     */
+    pub fn matches(&self, node: DataRef<T>) -> Option<Mapping<T>> {
+        let DataRef(data, data_root) = node;
+        self.matches_rec(self.redex.root(), data, data_root, HashMap::new())
+    }
+
+    // Recursive implementation of above, to avoid forcing client code
+    // to explicitly pass the mapping.
+    fn matches_rec(
+        &self,
+        pattern_root: T::Var,
+        data: &DataGraph<T>,
+        data_root: T::Id,
+        mapping: Mapping<T>
+    ) -> Option<Mapping<T>> {
+        use CanonicalNode as N;
+        use CanonicalTerm::*;
+
+        println!("enter: {:?}, {:?}", pattern_root, data_root);
+
+        let mut mapping = mapping;
+        let N {function: x, id: var, rest: sp} = self.redex.get(pattern_root)?;
+        let N {function: y, id: id,  rest: sd} = data.get(data_root)?;
+
+        println!("check: {:?}, {:?}", x, y);
+
+        if x == y {
+            println!("bind: {:?}, {:?}", *var, *id);
+            mapping.insert(*var, *id);
+            // loop over the rest of the pattern
+            for (pat, node) in sp.iter().zip(sd.iter()) { match (pat, node) {
+                (Id(v), Id(i)) => {
+                    println!("bind-rec: {:?}, {:?}", *v, *i);
+
+                    if let Some(_) = self.redex.get(*v) {
+                        // ensure non-empty sub-terms also match.
+                        // don't bind before-hand, matches will do this for us.
+                        mapping = matches(self, *v, data, *i, Some(mapping))?;
+                    } else {
+                        // just bind the id in the mapping.
+                        mapping.insert(*v, *i);
+                    }
+
+                    println!("recurse-done {:?}", mapping);
+                },
+
+                // Ensure two constructors are the same.
+                (Constructor(x), Constructor(y)) if x == y => (),
+
+                // Early return if any subterms fail to match
+                (x, y) => {
+                    println!("fail: {:?} != {:?}", x, y);
+                    return None
+                }
+                //mapping = matches_term(pat, node, mapping)?;
+            } }
+
+            println!("success: {:?}", mapping);
+            Some(mapping)
+        } else {
+            println!("fail: {:?} != {:?}", x, y);
+            None
+        }
+    }
+}
+
+
+
 /**
  * A Graph Rewriting System (GRS) is an ordered set of rules.
  */
 struct CanonicalGRS<T: Types>(Vec<CanonicalRule<T>>);
 type DataGraph<T: Types> = CanonicalGraph<T::Id, T::Val>;
 type Mapping<T: Types> = HashMap<T::Var, T::Id>;
+
+
+/**
+ * A reference to a node in a data graph.
+ */
+struct DataRef<'a, T: Types>(&'a DataGraph<T>, T::Id);
 
 
 /**
@@ -301,13 +371,8 @@ mod tests {
         ];
 
         assert_eq!(
-            matches(
-                &grs.0[0],
-                x,
-                &data,
-                0,
-                None
-            ), Some(HashMap::from([
+            grs.0[0].matches(DataRef(&data, 0)),
+            Some(HashMap::from([
                 (x, 0),
                 (y, 1),
                 (z, 1)
