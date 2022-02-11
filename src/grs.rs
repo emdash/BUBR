@@ -79,20 +79,37 @@ trait Types {
 }
 
 
+struct NodeRef <'a, ID, T: Types>(&'a CanonicalGraph<ID, T::Val>, ID)
+where ID: Debug + Clone + Eq + Copy + Hash + PartialEq;
+
+
 /**
  * Some helpful type aliases to keep function signatures clean.
  *
  * We deliberately distinguish between pattern nodes and data nodes
  * at the type level.
  */
-type NodeRef    <'a, ID, V>    = (&'a CanonicalGraph<ID, V>, ID);
 type DataNode   <    T: Types> = CanonicalNode <    T::Id,  T::Val>;
-type DataRef    <'a, T: Types> = NodeRef       <'a, T::Id,  T::Val>;
+type DataRef    <'a, T: Types> = NodeRef       <'a, T::Id, T>;
 type DataGraph  <    T: Types> = CanonicalGraph<    T::Id,  T::Val>;
 type PatternNode<    T: Types> = CanonicalNode <    T::Var, T::Val>;
-type PatternRef <'a, T: Types> = NodeRef       <'a, T::Var, T::Val>;
+type PatternRef <'a, T: Types> = NodeRef       <'a, T::Var, T>;
 type Pattern    <    T: Types> = CanonicalGraph<    T::Var, T::Val>;
 type Mapping    <    T: Types> = HashMap       <    T::Var, T::Id>;
+
+
+trait DataNodeTrait<T: Types> {
+    fn id(&self) -> T::Id;
+    fn redirect(&mut self, redex: T::Id, contractum: T::Id);
+    fn insert(&mut self, new: DataNode<T>);
+}
+
+/*
+
+trait PatternNodeTrait<T: Types> {
+    fn matches<'a>(&'a self, data: DataRef<'a, T>) -> Option<Mapping<T>>;
+    fn rewrite(&self, mapping: Mapping<T>) -> DataNode<T>;
+}*/
 
 
 impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
@@ -131,8 +148,7 @@ impl<T: Types> CanonicalRule<T> {
      * If a rule matches the subgraph rooted at `node`, return the
      * mapping of variables to node ideas..
      */
-    pub fn matches(&self, node: DataRef<T>) -> Option<Mapping<T>> {
-        let (data, data_root) = node;
+    pub fn matches(&self, data: &DataGraph<T>, data_root: T::Id) -> Option<Mapping<T>> {
         self.matches_rec(self.redex.root(), data, data_root, HashMap::new())
     }
 
@@ -194,6 +210,16 @@ impl<T: Types> CanonicalRule<T> {
             None
         }
     }
+
+    /*
+    pub fn rewrite(&self, data: DataGraph<T>) -> DataGraph<T> {
+        if let Some(mapping) = self.matches((&data, data.root())) {
+            let rewritten = self.rewrite_rec(data, data.root(), &mapping);
+            data.set(data.root()) 
+        } else {
+            data
+        }
+    }*/
 }
 
 
@@ -313,7 +339,7 @@ mod tests {
         ];
 
         assert_eq!(
-            grs.0[0].matches((&data, 0)),
+            grs.0[0].matches(&data, data.root()),
             Some(HashMap::from([
                 (x, 0),
                 (y, 1),
@@ -322,7 +348,7 @@ mod tests {
         );
 
         assert_eq!(
-            grs.0[1].matches((&data, 0)),
+            grs.0[1].matches(&data, data.root()),
             None
         );
     }
