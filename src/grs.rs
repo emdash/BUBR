@@ -125,8 +125,8 @@ fn matches<ID: Copy + Eq + Hash + Debug, T: Types>(
     pattern_root: T::Sym,
     data: &DataGraph<ID, T>,
     data_root: ID,
-    mapping: Option<Vec<(T::Sym, ID)>>
-) -> Option<Vec<(T::Sym, ID)>>
+    mapping: Option<HashMap<T::Sym, ID>>
+) -> Option<HashMap<T::Sym, ID>>
 where T::Sym: Copy + Eq + Hash + Debug,
       T::Val: PartialEq + Debug
 {
@@ -137,13 +137,13 @@ where T::Sym: Copy + Eq + Hash + Debug,
 
     let N {function: x, id: var, rest: sp} = pattern.redex.get(pattern_root)?;
     let N {function: y, id: id,  rest: sd} = data.get(data_root)?;
-    let mut mapping = mapping.unwrap_or(Vec::new());
+    let mut mapping = mapping.unwrap_or(HashMap::new());
 
     println!("check: {:?}, {:?}", x, y);
 
     if x == y {
         println!("bind: {:?}, {:?}", *var, *id);
-        mapping.push((*var, *id));
+        mapping.insert(*var, *id);
         // loop over the rest of the pattern
         for (pat, node) in sp.iter().zip(sd.iter()) { match (pat, node) {
             (Id(v), Id(i)) => {
@@ -154,8 +154,8 @@ where T::Sym: Copy + Eq + Hash + Debug,
                     // don't bind before-hand, matches will do this for us.
                     mapping = matches(pattern, *v, data, *i, Some(mapping))?;
                 } else {
-                    // just bind the pattern so it can be used for substitution.
-                    mapping.push((*v, *i));
+                    // just bind the id in the mapping.
+                    mapping.insert(*v, *i);
                 }
 
                 println!("recurse-done {:?}", mapping);
@@ -200,7 +200,7 @@ macro_rules! node {
 }
 
 macro_rules! graph {
-    ($($nodes:expr),*) => {CanonicalGraph::new(vec![$($nodes),*])}
+    ($($nodes:expr),*) => {CanonicalGraph::new(vec![$($nodes),*])};
 }
 
 macro_rules! rule {
@@ -210,7 +210,7 @@ macro_rules! rule {
             contractum: $contractum,
             redirection: ($red, $con)
         }
-    }
+    };
 }
 
 
@@ -300,11 +300,11 @@ mod tests {
                 &data,
                 0,
                 None
-            ), Some(vec![
+            ), Some(HashMap::from([
                 (x, 0),
                 (y, 1),
                 (z, 1)
-            ])
+            ]))
         );
 
         assert_eq!(
