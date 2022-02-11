@@ -38,39 +38,24 @@ use crate::SigmaRules;
 
 
 /**
- * This is like the one in lib.rs, but we add some extra bounds, and
- * one extra associated type.
+ * This is the "type context" for the data-structures and algorithms
+ * in this crate.
+ *
+ * Using this to factor out a ton of repeated trait bounds and where
+ * clauses into one place.
  */
-trait Value: Debug + SigmaRules {}
+trait Types {
+    type Val: Value;     // Node data
+    type Id: NodeId;     // A way of referring to a data node. Must be copy.
+    type Var: Variable;  // A way of referring to a pattern node. Must be copy.
+}
+
+
+// Helper traits. This lets us re-use these bounds in the few places
+// where we can't refer to T::Foo directly.
+trait Value: Debug + Copy + SigmaRules {}
 trait NodeId: Debug + Copy + PartialEq {}
 trait Variable: Debug + Copy + PartialEq {}
-
-trait Types {
-    type Val: Value;
-    type Id: NodeId;
-    type Var: Variable;
-}
-
-
-/**
- * ADT for canonical form GRS
- */
-#[derive(Debug)]
-enum CanonicalTerm<ID: NodeId, T: Types> {
-    Id(ID),
-    Constructor(T::Val),
-}
-
-
-/**
- * A node in a canonical graph.
- */
-#[derive(Debug)]
-struct CanonicalNode<ID: NodeId, T: Types> {
-    id: ID,
-    function: T::Val,
-    rest: Vec<CanonicalTerm<ID, T>>
-}
 
 
 /**
@@ -83,75 +68,40 @@ trait Mapping<T: Types> {
 }
 
 
-/*
+/**
+ * A term in canonical form is either a variable or a constant.
+ */
+#[derive(Debug, Copy, Clone)]
+enum CanonicalTerm<ID: Copy, T: Types> {
+    Var(ID),
+    Const(T::Val),
+}
 
+
+/**
+ * Abstract over mutable runtime data representations.
+ */
 trait DataGraph<T: Types> {
-    fn get(&self, T::Id) -> CanonicalNode<T::Id, T::Val>;
-    fn append(self, Can
+    type It: Iterator<Item=CanonicalTerm<T::Id, T>>;
+    fn value<'a>(&self, id: T::Id) -> &'a T::Val;
+    fn children(&self, id: T::Id) -> Self::It;
+    fn insert(self, id: T::Id, func: T::Val, rest: Self::It) -> Self;
+    fn root(&self) -> T::Id;
+    fn gc(self) -> Self;
 }
-
 
 
 /**
- * A canonical graph is an ordered set of nodes.
+ * Abstract over immutable runtime pattern representations.
  */
-#[derive(Debug)]
-struct CanonicalGraph<ID: Copy + Eq + Hash + Debug, V: Debug> {
-    ordering: Vec<ID>,
-    mapping: HashMap<ID, CanonicalNode<ID, V>>
-}
-
-
-struct NodeRef <'a, ID, T: Types>(&'a CanonicalGraph<ID, T::Val>, ID)
-where ID: Debug + Clone + Eq + Copy + Hash + PartialEq;
-
-
-/**
- * Some helpful type aliases to keep function signatures clean.
- *
- * We deliberately distinguish between pattern nodes and data nodes
- * at the type level.
- */
-type DataNode   <    T: Types> = CanonicalNode <    T::Id,  T::Val>;
-type DataRef    <'a, T: Types> = NodeRef       <'a, T::Id, T>;
-type DataGraph  <    T: Types> = CanonicalGraph<    T::Id,  T::Val>;
-type PatternNode<    T: Types> = CanonicalNode <    T::Var, T::Val>;
-type PatternRef <'a, T: Types> = NodeRef       <'a, T::Var, T>;
-type Pattern    <    T: Types> = CanonicalGraph<    T::Var, T::Val>;
-type Mapping    <    T: Types> = HashMap       <    T::Var, T::Id>;
-
-
-trait DataNodeTrait<T: Types> {
-    fn id(&self) -> T::Id;
-    fn redirect(&mut self, redex: T::Id, contractum: T::Id);
-    fn insert(&mut self, new: DataNode<T>);
-}
-
-/*
-
-trait PatternNodeTrait<T: Types> {
-    fn matches<'a>(&'a self, data: DataRef<'a, T>) -> Option<Mapping<T>>;
-    fn rewrite(&self, mapping: Mapping<T>) -> DataNode<T>;
-}*/
-
-
-impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
-    pub fn new(nodes: Vec<CanonicalNode<ID, V>>) -> Self {
-        let mut ordering = Vec::new();
-        let mut mapping = HashMap::new();
-
-        for node in nodes {
-            ordering.push(node.id);
-            mapping.insert(node.id, node);
-        }
-
-        CanonicalGraph { ordering, mapping }
-    }
-
-    pub fn root(&self) -> ID { self.ordering[0] }
-
-    pub fn get(&self, id: ID) -> Option<&CanonicalNode<ID, V>> {
-        self.mapping.get(&id)
+trait Pattern<T: Types> {
+    type It: Iterator<Item=CanonicalTerm<T::Var, T>>;
+    type Mp: Mapping<T>;
+    fn value<'a>(&self, id: T::Var) -> &'a T::Val;
+    fn children(&self, id: T::Var) -> Self::It;
+    fn root(&self) -> T::Id;
+    fn matches(&self, data: &impl DataGraph<T>) -> Option<Self::Mp> {
+        None
     }
 }
 
@@ -159,13 +109,13 @@ impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
 /**
  * A rewrite rule in canonical form.
  */
-struct CanonicalRule<T: Types> {
-    redex: CanonicalGraph<T::Var, T::Val>,
-    contractum: CanonicalGraph<T::Var, T::Val>,
+struct CanonicalRule<T: Types, P: Pattern<T>> {
+    redex: P,
+    contractum: P,
     redirection: (T::Var, T::Var)
 }
 
-
+/*
 impl<T: Types> CanonicalRule<T> {
     /**
      * If a rule matches the subgraph rooted at `node`, return the
