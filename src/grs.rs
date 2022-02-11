@@ -27,7 +27,7 @@
 use std::collections::HashMap;
 use core::hash::Hash;
 use core::fmt::Debug;
-use crate::{Types};
+use crate::SigmaRules;
 
 
 /**
@@ -35,6 +35,17 @@ use crate::{Types};
  *
  * This module is a toy graph re-writing system (GRS).
  */
+
+
+/**
+ * This is like the one in lib.rs, but we add some extra bounds, and
+ * one extra associated type.
+ */
+trait Types {
+    type Val: Debug + Clone + SigmaRules + PartialEq + Eq;
+    type Id: Debug + Clone + Eq + Copy + Hash + PartialEq;
+    type Var: Debug + Clone + Eq + Copy + Hash;
+}
 
 
 /**
@@ -89,6 +100,7 @@ impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
     }
 }
 
+
 /**
  * A rewrite rule in canonical form.
  *
@@ -97,22 +109,20 @@ impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
  *
  * We could add an Id field to types, but this requires every
  * implementation define this type, even if they don't use it.
- *
- * We also introduce the additional bound that T::Sym be Copy, since
- * it's used for node ids. We don't want to take it by move.
  */
-struct CanonicalRule<T: Types> where T::Sym: Copy + Eq + Hash {
-    redex: CanonicalGraph<T::Sym, T::Val>,
-    contractum: CanonicalGraph<T::Sym, T::Val>,
-    redirection: (T::Sym, T::Sym)
+struct CanonicalRule<T: Types> {
+    redex: CanonicalGraph<T::Var, T::Val>,
+    contractum: CanonicalGraph<T::Var, T::Val>,
+    redirection: (T::Var, T::Var)
 }
 
 
 /**
  * A Graph Rewriting System (GRS) is an ordered set of rules.
  */
-struct CanonicalGRS<T: Types>(Vec<CanonicalRule<T>>) where T::Sym: Copy + Eq + Hash;
-type DataGraph<ID, T: Types> = CanonicalGraph<ID, T::Val>;
+struct CanonicalGRS<T: Types>(Vec<CanonicalRule<T>>);
+type DataGraph<T: Types> = CanonicalGraph<T::Id, T::Val>;
+type Mapping<T: Types> = HashMap<T::Var, T::Id>;
 
 
 /**
@@ -120,16 +130,13 @@ type DataGraph<ID, T: Types> = CanonicalGraph<ID, T::Val>;
  * assignment of the pattern variables that satisfies the pattern, if
  * possible.
  */
-fn matches<ID: Copy + Eq + Hash + Debug, T: Types>(
+fn matches<T: Types>(
     pattern: &CanonicalRule<T>,
-    pattern_root: T::Sym,
-    data: &DataGraph<ID, T>,
-    data_root: ID,
-    mapping: Option<HashMap<T::Sym, ID>>
-) -> Option<HashMap<T::Sym, ID>>
-where T::Sym: Copy + Eq + Hash + Debug,
-      T::Val: PartialEq + Debug
-{
+    pattern_root: T::Var,
+    data: &DataGraph<T>,
+    data_root: T::Id,
+    mapping: Option<Mapping<T>>
+) -> Option<Mapping<T>> {
     use CanonicalNode as N;
     use CanonicalTerm::*;
 
@@ -217,7 +224,6 @@ macro_rules! rule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SigmaRules, Types};
 
     // We can get away with a limited set of identifiers for
     // tests. Thes are lower-case to match the literature. Variables
@@ -229,7 +235,7 @@ mod tests {
 
     // We can get away with a limited set of "constant" values as
     // well.
-    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     enum Values {Start, Add, If, True, False, Int(i8), Zero, Succ, Hd, Cons}
 
     // We can punt on sigma rules for now.
@@ -241,8 +247,9 @@ mod tests {
     struct TestTypes;
 
     impl Types for TestTypes {
-        type Sym = Symbols;
+        type Var = Symbols;
         type Val = Values;
+        type Id  = u8;
     }
 
     type TestGrs = CanonicalGRS<TestTypes>;
