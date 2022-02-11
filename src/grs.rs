@@ -112,8 +112,6 @@ struct CanonicalRule<T: Types> where T::Sym: Copy + Eq + Hash {
  * A Graph Rewriting System (GRS) is an ordered set of rules.
  */
 struct CanonicalGRS<T: Types>(Vec<CanonicalRule<T>>) where T::Sym: Copy + Eq + Hash;
-
-
 type DataGraph<ID, T: Types> = CanonicalGraph<ID, T::Val>;
 
 
@@ -183,6 +181,39 @@ where T::Sym: Copy + Eq + Hash + Debug,
 }
 
 
+macro_rules! node {
+    ($id:expr ; $func:expr) => {
+        CanonicalNode {
+            id: $id,
+            function: $func,
+            rest: vec![]
+        }
+    };
+
+    ($id:expr ; $func:expr, $( $rest:expr ),+ ) => {
+        CanonicalNode {
+            id: $id,
+            function: $func,
+            rest: vec![$($rest),*]
+        }
+    };
+}
+
+macro_rules! graph {
+    ($($nodes:expr),*) => {CanonicalGraph::new(vec![$($nodes),*])}
+}
+
+macro_rules! rule {
+    ($redex:expr => $contractum:expr ; $red:expr => $con:expr) => {
+        CanonicalRule {
+            redex: $redex,
+            contractum: $contractum,
+            redirection: ($red, $con)
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,7 +253,7 @@ mod tests {
         use Values::*;
         use CanonicalTerm::*;
 
-        // Fully expanded example from the book:
+        // example from the book:
         //
         // x: Add y z
         // z: Zero    -> x := z
@@ -232,83 +263,35 @@ mod tests {
         //
         // x: Start   -> m: Add n o, n: Succ o, o: Zero, x := m
         let grs: TestGrs = CanonicalGRS(vec![
-            CanonicalRule {
-                redex: CanonicalGraph::new(vec![
-                    CanonicalNode {
-                        id: x,
-                        function: Add,
-                        rest: vec![Id(y), Id(z)],
-                    }, CanonicalNode {
-                        id: z,
-                        function: Zero,
-                        rest: vec![]
-                    },
-                ]),
-                contractum: CanonicalGraph::new(vec![]),
-                redirection: (x, z)
-            }, CanonicalRule {
-                redex: CanonicalGraph::new(vec![
-                    CanonicalNode {
-                        id: x,
-                        function: Add,
-                        rest: vec![Id(y), Id(z)],
-                    }, CanonicalNode {
-                        id: y,
-                        function: Succ,
-                        rest: vec![Id(a)],
-                    }
-                ]),
-                contractum: CanonicalGraph::new(vec![
-                    CanonicalNode {
-                        id: m,
-                        function: Succ,
-                        rest: vec![Id(n)],
-                    }, CanonicalNode {
-                        id: n,
-                        function: Add,
-                        rest: vec![Id(a), Id(z)],
-                    }
-                ]),
-                redirection: (x, m)
-            },CanonicalRule {
-                redex: CanonicalGraph::new(vec![
-                    CanonicalNode {
-                        id: x,
-                        function: Start,
-                        rest: vec![]
-                    },
-                ]),
-                contractum: CanonicalGraph::new(vec![
-                    CanonicalNode {
-                        id: m,
-                        function: Add,
-                        rest: vec![Id(n), Id(o)],
-                    }, CanonicalNode {
-                        id: n,
-                        function: Succ,
-                        rest: vec![Id(o)],
-                    }, CanonicalNode {
-                        id: o,
-                        function: Zero,
-                        rest: vec![]
-                    }
-                ]),
-                redirection: (x, m)
+            rule! {
+                graph! {
+                    node! {x; Add, Id(y), Id(z)},
+                    node! {z; Zero}
+                } => graph! {}; x => z
+            }, rule! {
+                graph! {
+                    node! {x; Add,  Id(y), Id(z)},
+                    node! {y; Succ, Id(a)}
+                } => graph! {
+                    node! {m; Succ, Id(n)},
+                    node! {n; Add,  Id(a), Id(z)}
+                }; x => m
+            }, rule!{
+                graph! {
+                    node!(x; Start)
+                } => graph!{
+                    node!(m; Add,  Id(n), Id(o)),
+                    node!(n; Succ, Id(o)),
+                    node!(o; Zero)
+                }; x => m
             },
         ]);
 
 
-        let data = CanonicalGraph::new(vec![
-            CanonicalNode {
-                id: 0,
-                function: Add,
-                rest: vec![Id(1), Id(1)]
-            }, CanonicalNode {
-                id: 1,
-                function: Zero,
-                rest: vec![]
-            }
-        ]);
+        let data = graph![
+            node!(0; Add, Id(1), Id(1) ),
+            node!(1; Zero)
+        ];
 
         assert_eq!(
             matches(
