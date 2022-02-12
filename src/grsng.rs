@@ -72,10 +72,10 @@ trait DataGraph<T: Types> {
     fn value(&self, id: T::Id) -> T::Val;
     fn args(&self, id: T::Id) -> Self::It;
     fn alloc(&mut self, func: T::Val) -> T::Id;
-    fn append_arg(&mut self, id: T::Id, src: T::Id);
+    fn append_arg(&mut self, id: T::Id, arg: T::Id);
     fn redirect(&mut self, src: T::Id, dst: T::Id);
     fn root(&self) -> T::Id;
-    fn gc(self) -> Self;
+    fn gc(&mut self) -> Self;
 }
 
 
@@ -243,6 +243,32 @@ mod tests {
         type Var = Symbols;
         type Val = Values;
         type Id  = u8;
+    }
+
+    impl DataGraph<TestTypes> for ([(Values, Vec<u8>); 256], u8) {
+        type It = std::slice::Iter<&'_, u8>;
+        fn value(&self, id: u8) -> Values { self.0[id as usize].0 }
+        fn args(&self, id: u8)  -> Self::It { self.0[id as usize].1.iter() }
+        fn alloc(&mut self, func: Values) -> u8 {
+            let ret = self.1;
+            self.1 +=1;
+            if self.1 == 0 {
+                panic!("graph store full!");
+            }
+            ret
+        }
+
+        fn append_arg(&mut self, id: u8, arg: u8) {
+            self.0[id as usize].1.push(arg);
+        }
+
+        fn redirect(&mut self, src: u8, dst: u8) {
+            self.swap(src as usize, dst as usize)
+        }
+
+        fn root(&self) -> u8 { 0 }
+
+        fn gc(self) { println!("Gc, ... right..."); }
     }
 
 }
