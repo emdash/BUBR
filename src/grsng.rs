@@ -304,4 +304,44 @@ mod tests {
 
         fn root(&'a self) -> u8 { 0 }
     }
+
+    impl Mapping<TestTypes> for HashMap<Symbol, u8> {
+        fn get(&self, var: Symbol) -> u8 { self[&var] }
+
+        fn merge(self, other: Self) -> Self {
+            let mut me = self;
+            me.extend(other.into_iter());
+            me
+        }
+        fn bind(var: Symbol, id: u8) -> Self {
+            let mut ret = HashMap::new();
+            ret.insert(var, id);
+            ret
+        }
+    }
+
+    impl<'a> PatternBody<'a, TestTypes>
+        for (HashMap<Symbol, (Value, Vec<Symbol>)>, Symbol)
+    {
+        type It = core::iter::Copied<core::slice::Iter<'a, Symbol>>;
+        type Mp = HashMap<Symbol, u8>;
+
+        fn contains(&'a self, id: Symbol) -> bool {
+            self.0.contains_key(&id)
+        }
+
+        fn value(&'a self, id: Symbol) -> Value {
+            self.0[&id].0
+        }
+
+        fn args(&'a self, id: Symbol) -> Self::It {
+            self.0[&id].1.iter().copied()
+        }
+
+        fn root(&'a self) -> Symbol { self.1 }
+    }
+
+    #[test]
+    fn test_grs() {
+    }
 }
