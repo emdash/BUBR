@@ -109,17 +109,18 @@ trait DataGraphBody<'a, T: Types> {
 /**
  * Abstract over immutable runtime pattern representations.
  */
-trait Pattern<T: Types> {
+trait Pattern<T: Types>: for <'a> PatternBody<'a, T> {}
+trait PatternBody<'a, T: Types> {
     type It: Iterator<Item=T::Var>;
     type Mp: Mapping<T>;
 
-    fn contains(&self, id: T::Var) -> bool;
-    fn value<'a>(&self, id: T::Var) -> T::Val;
-    fn args(&self, id: T::Var) -> Self::It;
-    fn root(&self) -> T::Var;
+    fn contains(&'a self, id: T::Var) -> bool;
+    fn value(&'a self, id: T::Var) -> T::Val;
+    fn args(&'a self, id: T::Var) -> Self::It;
+    fn root(&'a self) -> T::Var;
 
     fn matches(
-        &self,
+        &'a self,
         redex: T::Var,
         data: &impl DataGraph<T>,
         node: T::Id,
@@ -151,7 +152,7 @@ trait Pattern<T: Types> {
     }
 
     fn rewrite(
-        &self,
+        &'a self,
         contractum: T::Var,
         data: &mut impl DataGraph<T>,
         mapping: &Self::Mp
@@ -184,7 +185,9 @@ impl<T: Types, P: Pattern<T>> CanonicalRule<T, P> {
      * If a rule matches the subgraph rooted at `node`, return the
      * mapping of variables to node ideas..
      */
-    pub fn matches(&self, data: &impl DataGraph<T>) -> Option<P::Mp> {
+    pub fn matches
+        (&self, data: &impl DataGraph<T>)
+         -> Option<<P as PatternBody<'_, T>>::Mp> {
         self.redex.matches(self.redex.root(), data, data.root())
     }
 
@@ -272,23 +275,19 @@ mod tests {
         type Id  = u8;
     }
 
-    struct TestDG {
-        storage: Vec<(Value, Vec<u8>)>,
-    }
-
-    impl<'a> DataGraphBody<'a, TestTypes> for TestDG {
+    impl<'a> DataGraphBody<'a, TestTypes> for Vec<(Value, Vec<u8>)> {
         type It = core::iter::Copied<core::slice::Iter<'a, u8>>;
 
         fn value(&'a self, id: u8) -> Value {
-            self.storage[id as usize].0
+            self[id as usize].0
         }
 
         fn args(&'a self, id: u8) -> Self::It {
-            self.storage[id as usize].1.iter().copied()
+            self[id as usize].1.iter().copied()
         }
         fn alloc(&'a mut self, func: Value) -> u8 {
-            self.storage.push((func, Vec::new()));
-            let len = self.storage.len();
+            self.push((func, Vec::new()));
+            let len = self.len();
             if len == 256 {
                 panic!("storage exhausted");
             }
@@ -296,11 +295,11 @@ mod tests {
         }
 
         fn append_arg(&'a mut self, id: u8, arg: u8) {
-            self.storage[id as usize].1.push(arg);
+            self[id as usize].1.push(arg);
         }
 
         fn redirect(&'a mut self, src: u8, dst: u8) {
-            self.storage.swap(src as usize, dst as usize)
+            self.swap(src as usize, dst as usize)
         }
 
         fn root(&'a self) -> u8 { 0 }
