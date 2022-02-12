@@ -58,9 +58,9 @@ trait Types {
  * This trait maps vars to IDs for rule rewriting.
  */
 trait Mapping<T: Types>: Debug {
+    fn empty() -> Self;
     fn get(&self, var: T::Var) -> T::Id;
-    fn merge(self, other: Self) -> Self;
-    fn bind(var: T::Var, id: T::Id) -> Self;
+    fn bind(&mut self, var: T::Var, id: T::Id);
 }
 
 
@@ -80,13 +80,13 @@ trait Mapping<T: Types>: Debug {
 // specify the associated item It: core::slice::Iter<&'a, T> doesn't
 // count...
 //
-// I googled around, and found this wierd pattern using HRBTs:
+// I googled around, and found this wierd pattern using HRTB:
 // https://stackoverflow.com/questions/60459609/
 //
 // Shockingly this seems to type-check. I don't know if this pattern
 // is sound, or idiomatic, or what. But it seems to solve the problem.
 //
-// I need to learn more about how HRBTs work and see if this can be
+// I need to learn more about how HRTB work and see if this can be
 // made simpler, or else abstracted into a hack.
 //
 // Another, simpler way of doing this would involve GATs, which are
@@ -112,7 +112,6 @@ trait DataGraphBody<'a, T: Types> {
 trait Pattern<T: Types>: for <'a> PatternBody<'a, T> {}
 trait PatternBody<'a, T: Types> {
     type It: Iterator<Item=T::Var>;
-    type Mp: Mapping<T>;
 
     fn contains(&'a self, id: T::Var) -> bool;
     fn value(&'a self, id: T::Var) -> T::Val;
@@ -124,7 +123,8 @@ trait PatternBody<'a, T: Types> {
         redex: T::Var,
         data: &impl DataGraph<T>,
         node: T::Id,
-    ) -> Option<Self::Mp> {
+        mapping: &mut impl Mapping<T>,
+    ) -> Option<()> {
         println!("enter: {:?}, {:?}", redex, node);
 
         let redex_value = self.value(redex);
@@ -132,19 +132,19 @@ trait PatternBody<'a, T: Types> {
 
         if redex_value == node_value {
             println!("bind: {:?} -> {:?}", redex, node);
-            let mut mapping = Self::Mp::bind(redex, node);
+            mapping.bind(redex, node);
             let iter = self.args(redex).zip(data.args(node));
             for (var, id) in iter {
                 println!("bind-rec: {:?}, {:?}", var, id);
                 if self.contains(var) {
-                    mapping = mapping.merge(self.matches(var, data, id)?);
+                    self.matches(var, data, id, mapping)?;
                 } else {
-                    mapping = Self::Mp::bind(var, id);
+                    mapping.bind(var, id);
                 }
-                println!("recurse-done {:?}", mapping);
+                 println!("recurse-done {:?}", mapping);
             }
             println!("success: {:?}", mapping);
-            Some(mapping)
+            Some(())
         } else {
             println!("fail: {:?} != {:?}", redex_value, node_value);
             None
@@ -155,7 +155,7 @@ trait PatternBody<'a, T: Types> {
         &'a self,
         contractum: T::Var,
         data: &mut impl DataGraph<T>,
-        mapping: &Self::Mp
+        mapping: &impl Mapping<T>
     ) -> T::Id {
         let id = data.alloc(self.value(contractum));
         for var in self.args(contractum) {
@@ -185,14 +185,23 @@ impl<T: Types, P: Pattern<T>> CanonicalRule<T, P> {
      * If a rule matches the subgraph rooted at `node`, return the
      * mapping of variables to node ideas..
      */
-    pub fn matches
-        (&self, data: &impl DataGraph<T>)
-         -> Option<<P as PatternBody<'_, T>>::Mp> {
-        self.redex.matches(self.redex.root(), data, data.root())
+    pub fn matches<M: Mapping<T>>(&self, data: &impl DataGraph<T>) -> Option<M> {
+        let mut m = M::empty();
+        if let Some(()) = self.redex.matches(
+            self.redex.root(),
+            data,
+            data.root(),
+            &mut m
+        ) {
+            Some(m)
+        } else {
+            None
+        }
     }
 
-    pub fn rewrite(&self, data: &mut impl DataGraph<T>) -> bool {
-        if let Some(mapping) = self.matches(data) {
+    pub fn rewrite<M: Mapping<T>>(&self, data: &mut impl DataGraph<T>) -> bool {
+        let map: Option<M> = self.matches(data);
+        if let Some(mapping) = map {
             self.contractum.rewrite(self.contractum.root(), data, &mapping);
             // XXX: this is an extra step, which ideally we could
             // avoid by directly writing into the redirection node.
@@ -211,22 +220,20 @@ impl<T: Types, P: Pattern<T>> CanonicalRule<T, P> {
 }
 
 /*
-macro_rules! node {
-    ($id:expr ; $func:expr) => {
-        CanonicalNode {
-            id: $id,
-            function: $func,
-            rest: vec![]
-        }
-    };
+type CanonicalForm<Id, Val> = (Id, Val, [Id]);
 
+fn into_dg(dg: impl DataGraph<T>, nodes: CanonicalGraph) -> dg {
+    
+    for (id, func, args) in nodes {
+
+}*/
+
+
+macro_rules! node {
+    ($id:expr ; $func:expr) => {($id, $func, vec![])};
     ($id:expr ; $func:expr, $( $rest:expr ),+ ) => {
-        CanonicalNode {
-            id: $id,
-            function: $func,
-            rest: vec![$($rest),*]
-        }
-    };
+        ($id, $func, vec![$($rest),*])
+    }
 }
 
 macro_rules! graph {
@@ -242,7 +249,6 @@ macro_rules! rule {
         }
     };
 }
-*/
 
 
 #[cfg(test)]
@@ -306,17 +312,10 @@ mod tests {
     }
 
     impl Mapping<TestTypes> for HashMap<Symbol, u8> {
+        fn empty() -> Self { HashMap::new() }
         fn get(&self, var: Symbol) -> u8 { self[&var] }
-
-        fn merge(self, other: Self) -> Self {
-            let mut me = self;
-            me.extend(other.into_iter());
-            me
-        }
-        fn bind(var: Symbol, id: u8) -> Self {
-            let mut ret = HashMap::new();
-            ret.insert(var, id);
-            ret
+        fn bind(&mut self, var: Symbol, id: u8) {
+            self.insert(var, id);
         }
     }
 
@@ -324,7 +323,6 @@ mod tests {
         for (HashMap<Symbol, (Value, Vec<Symbol>)>, Symbol)
     {
         type It = core::iter::Copied<core::slice::Iter<'a, Symbol>>;
-        type Mp = HashMap<Symbol, u8>;
 
         fn contains(&'a self, id: Symbol) -> bool {
             self.0.contains_key(&id)
@@ -344,4 +342,5 @@ mod tests {
     #[test]
     fn test_grs() {
     }
+/**/
 }
