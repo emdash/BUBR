@@ -67,15 +67,42 @@ trait Mapping<T: Types>: Debug {
 /**
  * Abstract over mutable runtime data representations.
  */
-trait DataGraph<T: Types> {
-    type It: Iterator<Item=T::Id>;
-    fn value(&self, id: T::Id) -> T::Val;
-    fn args(&self, id: T::Id) -> Self::It;
-    fn alloc(&mut self, func: T::Val) -> T::Id;
-    fn append_arg(&mut self, id: T::Id, arg: T::Id);
-    fn redirect(&mut self, src: T::Id, dst: T::Id);
-    fn root(&self) -> T::Id;
-    fn gc(&mut self) -> Self;
+// XXX: I would have liked to just do:
+// // fn args(&self, id: T::Id) -> impl Iterator<Item=T::Id>;
+// but impl Trait is not allowed within a trait.
+//
+// The next thing I tried was this.
+// // type It: impl Iterator<Item=T::Id>;
+// // fn args(&self, id: T::Id) -> Self::It;
+//
+// This made the trait unimplementable, since there was no way to
+// introduce the lifetime <'a> in the impl, since merely using it to
+// specify the associated item It: core::slice::Iter<&'a, T> doesn't
+// count...
+//
+// I googled around, and found this wierd pattern using HRBTs:
+// https://stackoverflow.com/questions/60459609/
+//
+// Shockingly this seems to type-check. I don't know if this pattern
+// is sound, or idiomatic, or what. But it seems to solve the problem.
+//
+// I need to learn more about how HRBTs work and see if this can be
+// made simpler, or else abstracted into a hack.
+//
+// Another, simpler way of doing this would involve GATs, which are
+// not yet stabilized, but should be soon.
+//
+// Still another interesting feature would be type-alias-impl-trait.
+trait DataGraph<T: Types>: for <'a> DataGraphBody<'a, T> {}
+trait DataGraphBody<'a, T: Types> {
+    type It: Iterator<Item = T::Id>;
+    fn args(&'a self, id: T::Id) -> Self::It;
+    fn value(&'a self, id: T::Id) -> T::Val;
+    fn alloc(&'a mut self, func: T::Val) -> T::Id;
+    fn append_arg(&'a mut self, id: T::Id, arg: T::Id);
+    fn redirect(&'a mut self, src: T::Id, dst: T::Id);
+    fn root(&'a self) -> T::Id;
+    fn gc(&'a mut self) {}
 }
 
 
@@ -225,14 +252,14 @@ mod tests {
     // CamelCase or just a capital letter.
     #[allow(non_camel_case_types)]
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-    enum Symbols {a, b, c, d, m, n, o, x, y, z}
+    enum Symbol {a, b, c, d, m, n, o, x, y, z}
 
     // We can get away with a limited set of "constant" values as
     // well.
     #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-    enum Values {Start, Add, If, True, False, Int(i8), Zero, Succ, Hd, Cons}
+    enum Value {Start, Add, If, True, False, Int(i8), Zero, Succ, Hd, Cons}
 
-    impl SigmaRules for Values {
+    impl SigmaRules for Value {
         type Error = ();
     }
 
@@ -240,99 +267,42 @@ mod tests {
     struct TestTypes;
 
     impl Types for TestTypes {
-        type Var = Symbols;
-        type Val = Values;
+        type Var = Symbol;
+        type Val = Value;
         type Id  = u8;
     }
 
-    impl DataGraph<TestTypes> for ([(Values, Vec<u8>); 256], u8) {
-        type It = std::slice::Iter<&'_, u8>;
-        fn value(&self, id: u8) -> Values { self.0[id as usize].0 }
-        fn args(&self, id: u8)  -> Self::It { self.0[id as usize].1.iter() }
-        fn alloc(&mut self, func: Values) -> u8 {
-            let ret = self.1;
-            self.1 +=1;
-            if self.1 == 0 {
-                panic!("graph store full!");
+    struct TestDG {
+        storage: Vec<(Value, Vec<u8>)>,
+    }
+
+    impl<'a> DataGraphBody<'a, TestTypes> for TestDG {
+        type It = core::iter::Copied<core::slice::Iter<'a, u8>>;
+
+        fn value(&'a self, id: u8) -> Value {
+            self.storage[id as usize].0
+        }
+
+        fn args(&'a self, id: u8) -> Self::It {
+            self.storage[id as usize].1.iter().copied()
+        }
+        fn alloc(&'a mut self, func: Value) -> u8 {
+            self.storage.push((func, Vec::new()));
+            let len = self.storage.len();
+            if len == 256 {
+                panic!("storage exhausted");
             }
-            ret
+            (len - 1) as u8
         }
 
-        fn append_arg(&mut self, id: u8, arg: u8) {
-            self.0[id as usize].1.push(arg);
+        fn append_arg(&'a mut self, id: u8, arg: u8) {
+            self.storage[id as usize].1.push(arg);
         }
 
-        fn redirect(&mut self, src: u8, dst: u8) {
-            self.swap(src as usize, dst as usize)
+        fn redirect(&'a mut self, src: u8, dst: u8) {
+            self.storage.swap(src as usize, dst as usize)
         }
 
-        fn root(&self) -> u8 { 0 }
-
-        fn gc(self) { println!("Gc, ... right..."); }
-    }
-
-}
-    /*
-    #[test]
-    fn test_rules() {
-        use Symbols::*;
-        use Values::*;
-        use CanonicalTerm::*;
-
-        // example from the book:
-        //
-        // x: Add y z
-        // z: Zero    -> x := z
-        //
-        // x: Add y z,
-        // y: Succ a  -> m: Succ n, n: Add a z, x := m
-        //
-        // x: Start   -> m: Add n o, n: Succ o, o: Zero, x := m
-        let grs: TestGrs = CanonicalGRS(vec![
-            rule! {
-                graph! {
-                    node! {x; Add, Id(y), Id(z)},
-                    node! {z; Zero}
-                } => graph! {}; x => z
-            }, rule! {
-                graph! {
-                    node! {x; Add,  Id(y), Id(z)},
-                    node! {y; Succ, Id(a)}
-                } => graph! {
-                    node! {m; Succ, Id(n)},
-                    node! {n; Add,  Id(a), Id(z)}
-                }; x => m
-            }, rule!{
-                graph! {
-                    node!(x; Start)
-                } => graph!{
-                    node!(m; Add,  Id(n), Id(o)),
-                    node!(n; Succ, Id(o)),
-                    node!(o; Zero)
-                }; x => m
-            },
-        ]);
-
-
-        let data = graph![
-            node!(0; Add, Id(1), Id(1) ),
-            node!(1; Zero)
-        ];
-
-        assert_eq!(
-            grs.0[0].matches(&data, data.root()),
-            Some(HashMap::from([
-                (x, 0),
-                (y, 1),
-                (z, 1)
-            ]))
-        );
-
-        assert_eq!(
-            grs.0[1].matches(&data, data.root()),
-            None
-        );
+        fn root(&'a self) -> u8 { 0 }
     }
 }
-
-*/
