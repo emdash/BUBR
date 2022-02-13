@@ -44,67 +44,8 @@ pub fn debug<T: Debug>(prefix: &str, value: T) -> T {
 
 
 /**
- * Trait for operations external to pure lambda calculus.
- *
- * See tests for an examples of how this is used.
- */
-pub trait SigmaRules: Sized {
-    type Error: Sized + Debug + Default;
-
-    fn apply(_f: Self, _x: Self) -> Result<Self, Self::Error> {
-        Err(Self::Error::default())
-    }
-}
-
-
-/**
- * A container for various trait bounds.
- *
- * This gives us some parametricity without having where clauses
- * proliferate everywhere.
- */
-pub trait Types {
-    // A type which represents a "constant" value in the lambda calc.
-    type Val: Debug + Clone + SigmaRules;
-    // A type which represents a "symbol" in the lambda calc, usually
-    // String. But if you want to replace this with an integer, or a
-    // custom type, you can.
-    type Sym: Debug + Clone + PartialEq;
-}
-
-
-/**
- * This is the abstract I/O format: Flat token sequences which
- * represent a postfix encoding lambda calculus. Postfix is used here
- * for the usual reasons: it is unambiguous, compact, and trivial to
- * evaluate.
- *
- * V is the value type, for constant values. S is the "symbol" type,
- * for identifiers.
- *
- * Example: `\x.x` becomes the sequence `[Id("x"), Id("x"), Lambda]`,
- * if S is `&'static str`.
- */
-#[derive(Clone, Debug)]
-pub enum Token<T: Types> {
-    Id(T::Sym),
-    Val(T::Val),
-    Lambda,
-    Apply,
-}
-
-impl<T: Types> Token<T> {
-    pub fn id<B>(name: B) -> Token<T> where B: Into<T::Sym> {
-        Token::Id(name.into())
-    }
-}
-
-
-/**
  * Just to get oriented, we start with a simple lambda expression
  * parser and evaluator.
  */
-mod expr;
 mod trs;
 mod grs;
-mod grsng;

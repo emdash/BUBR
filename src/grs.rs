@@ -24,10 +24,21 @@
 //
 // Fork this project to create your own MIT license that you can
 // always link to.
-use std::collections::HashMap;
-use core::hash::Hash;
 use core::fmt::Debug;
-use crate::SigmaRules;
+
+
+/**
+ * Trait for operations external to pure lambda calculus.
+ *
+ * See tests for an examples of how this is used.
+ */
+pub trait SigmaRules: Sized {
+    type Error: Sized + Debug + Default;
+
+    fn apply(_f: Self, _x: Self) -> Result<Self, Self::Error> {
+        Err(Self::Error::default())
+    }
+}
 
 
 /**
@@ -38,97 +49,136 @@ use crate::SigmaRules;
 
 
 /**
- * ADT for canonical form GRS
- */
-#[derive(Debug)]
-enum CanonicalTerm<ID: Copy + Debug, V: Debug> {
-    Id(ID),
-    Constructor(V),
-}
-
-
-/**
- * A node in a canonical graph.
- */
-#[derive(Debug)]
-struct CanonicalNode<ID: Copy + Eq + Hash + Debug, V: Debug> {
-    id: ID,
-    function: V,
-    rest: Vec<CanonicalTerm<ID, V>>
-}
-
-
-/**
- * A canonical graph is an ordered set of nodes.
- */
-#[derive(Debug)]
-struct CanonicalGraph<ID: Copy + Eq + Hash + Debug, V: Debug> {
-    ordering: Vec<ID>,
-    mapping: HashMap<ID, CanonicalNode<ID, V>>
-}
-
-
-/**
- * This is like the one in lib.rs, but we add some extra bounds, and
- * one extra associated type.
+ * This is the "type context" for the data-structures and algorithms
+ * in this crate.
+ *
+ * Using this to factor out a ton of repeated trait bounds and where
+ * clauses into one place.
  */
 trait Types {
-    type Val: Debug + Clone + SigmaRules + PartialEq + Eq;
-    type Id: Debug + Clone + Eq + Copy + Hash + PartialEq;
-    type Var: Debug + Clone + Eq + Copy + Hash;
+    // The data contained within a node.
+    type Val: Debug + Copy + PartialEq + SigmaRules;
+    // Id of nodes in a data graph
+    type Id: Debug + Copy + PartialEq;
+    // Id of nodes in a pattern.
+    type Var: Debug + Copy + PartialEq;
 }
-
-
-struct NodeRef <'a, ID, T: Types>(&'a CanonicalGraph<ID, T::Val>, ID)
-where ID: Debug + Clone + Eq + Copy + Hash + PartialEq;
 
 
 /**
- * Some helpful type aliases to keep function signatures clean.
- *
- * We deliberately distinguish between pattern nodes and data nodes
- * at the type level.
+ * This trait maps vars to IDs for rule rewriting.
  */
-type DataNode   <    T: Types> = CanonicalNode <    T::Id,  T::Val>;
-type DataRef    <'a, T: Types> = NodeRef       <'a, T::Id, T>;
-type DataGraph  <    T: Types> = CanonicalGraph<    T::Id,  T::Val>;
-type PatternNode<    T: Types> = CanonicalNode <    T::Var, T::Val>;
-type PatternRef <'a, T: Types> = NodeRef       <'a, T::Var, T>;
-type Pattern    <    T: Types> = CanonicalGraph<    T::Var, T::Val>;
-type Mapping    <    T: Types> = HashMap       <    T::Var, T::Id>;
-
-
-trait DataNodeTrait<T: Types> {
-    fn id(&self) -> T::Id;
-    fn redirect(&mut self, redex: T::Id, contractum: T::Id);
-    fn insert(&mut self, new: DataNode<T>);
+trait Mapping<T: Types>: Debug {
+    fn new() -> Self;
+    fn get(&self, var: T::Var) -> T::Id;
+    fn bind(&mut self, var: T::Var, id: T::Id);
 }
 
-/*
 
-trait PatternNodeTrait<T: Types> {
-    fn matches<'a>(&'a self, data: DataRef<'a, T>) -> Option<Mapping<T>>;
-    fn rewrite(&self, mapping: Mapping<T>) -> DataNode<T>;
-}*/
+/**
+ * Abstract over mutable runtime data representations.
+ */
+// XXX: I would have liked to just do:
+// // fn args(&self, id: T::Id) -> impl Iterator<Item=T::Id>;
+// but impl Trait is not allowed within a trait.
+//
+// The next thing I tried was this.
+// // type It: impl Iterator<Item=T::Id>;
+// // fn args(&self, id: T::Id) -> Self::It;
+//
+// This made the trait unimplementable, since there was no way to
+// introduce the lifetime <'a> in the impl, since merely using it to
+// specify the associated item It: core::slice::Iter<&'a, T> doesn't
+// count...
+//
+// I googled around, and found this wierd pattern using HRTB:
+// https://stackoverflow.com/questions/60459609/
+//
+// Shockingly this seems to type-check. I don't know if this pattern
+// is sound, or idiomatic, or what. But it seems to solve the problem.
+//
+// I need to learn more about how HRTB work and see if this can be
+// made simpler, or else abstracted into a hack.
+//
+// Another, simpler way of doing this would involve GATs, which are
+// not yet stabilized, but should be soon.
+//
+// Still another interesting feature would be type-alias-impl-trait.
+trait DataGraph<T: Types>: for <'a> DataGraphBody<'a, T> {}
+trait DataGraphBody<'a, T: Types> {
+    type It: Iterator<Item = T::Id>;
+    fn new() -> Self;
+    fn args(&'a self, id: T::Id) -> Self::It;
+    fn value(&'a self, id: T::Id) -> T::Val;
+    fn alloc(&'a mut self, func: T::Val) -> T::Id;
+    fn append_arg(&'a mut self, id: T::Id, arg: T::Id);
+    fn redirect(&'a mut self, src: T::Id, dst: T::Id);
+    fn root(&'a self) -> T::Id;
+    fn gc(&'a mut self) {}
+}
 
 
-impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
-    pub fn new(nodes: Vec<CanonicalNode<ID, V>>) -> Self {
-        let mut ordering = Vec::new();
-        let mut mapping = HashMap::new();
+/**
+ * Abstract over immutable runtime pattern representations.
+ */
+trait Pattern<T: Types>: for <'a> PatternBody<'a, T> {}
+trait PatternBody<'a, T: Types> {
+    type It: Iterator<Item=T::Var>;
 
-        for node in nodes {
-            ordering.push(node.id);
-            mapping.insert(node.id, node);
+    fn contains(&'a self, id: T::Var) -> bool;
+    fn value(&'a self, id: T::Var) -> T::Val;
+    fn args(&'a self, id: T::Var) -> Self::It;
+    fn root(&'a self) -> T::Var;
+
+    fn matches(
+        &'a self,
+        redex: T::Var,
+        data: &impl DataGraph<T>,
+        node: T::Id,
+        mapping: &mut impl Mapping<T>,
+    ) -> Option<()> {
+        println!("enter: {:?}, {:?}", redex, node);
+
+        let redex_value = self.value(redex);
+        let node_value = data.value(node);
+
+        if redex_value == node_value {
+            println!("bind: {:?} -> {:?}", redex, node);
+            mapping.bind(redex, node);
+            let iter = self.args(redex).zip(data.args(node));
+            for (var, id) in iter {
+                println!("bind-rec: {:?}, {:?}", var, id);
+                if self.contains(var) {
+                    self.matches(var, data, id, mapping)?;
+                } else {
+                    mapping.bind(var, id);
+                }
+                 println!("recurse-done {:?}", mapping);
+            }
+            println!("success: {:?}", mapping);
+            Some(())
+        } else {
+            println!("fail: {:?} != {:?}", redex_value, node_value);
+            None
         }
-
-        CanonicalGraph { ordering, mapping }
     }
 
-    pub fn root(&self) -> ID { self.ordering[0] }
-
-    pub fn get(&self, id: ID) -> Option<&CanonicalNode<ID, V>> {
-        self.mapping.get(&id)
+    fn rewrite(
+        &'a self,
+        contractum: T::Var,
+        data: &mut impl DataGraph<T>,
+        mapping: &impl Mapping<T>
+    ) -> T::Id {
+        let id = data.alloc(self.value(contractum));
+        for var in self.args(contractum) {
+            if self.contains(var) {
+                let arg_id = self.rewrite(var, data, mapping);
+                data.append_arg(id, arg_id);
+            } else {
+                data.append_arg(id, mapping.get(var))
+            }
+        }
+        id
     }
 }
 
@@ -136,112 +186,62 @@ impl<ID: Copy + Eq + Hash + Debug, V: Debug> CanonicalGraph<ID, V> {
 /**
  * A rewrite rule in canonical form.
  */
-struct CanonicalRule<T: Types> {
-    redex: CanonicalGraph<T::Var, T::Val>,
-    contractum: CanonicalGraph<T::Var, T::Val>,
+struct CanonicalRule<T: Types, P: Pattern<T>> {
+    redex: P,
+    contractum: P,
     redirection: (T::Var, T::Var)
 }
 
-
-impl<T: Types> CanonicalRule<T> {
+impl<T: Types, P: Pattern<T>> CanonicalRule<T, P> {
     /**
      * If a rule matches the subgraph rooted at `node`, return the
-     * mapping of variables to node ideas..
+     * mapping of variables to node ids.
      */
-    pub fn matches(&self, data: &DataGraph<T>, data_root: T::Id) -> Option<Mapping<T>> {
-        self.matches_rec(self.redex.root(), data, data_root, HashMap::new())
-    }
-
-    // Recursive implementation of above, to avoid forcing client code
-    // to explicitly pass the mapping.
-    fn matches_rec(
-        &self,
-        pattern_root: T::Var,
-        data: &DataGraph<T>,
-        data_root: T::Id,
-        mapping: Mapping<T>
-    ) -> Option<Mapping<T>> {
-        use CanonicalNode as N;
-        use CanonicalTerm::*;
-
-        println!("enter: {:?}, {:?}", pattern_root, data_root);
-
-        let mut mapping = mapping;
-        let N {function: x, id: var, rest: sp} = self.redex.get(pattern_root)?;
-        let N {function: y, id: id,  rest: sd} = data.get(data_root)?;
-
-        println!("check: {:?}, {:?}", x, y);
-
-        if x == y {
-            println!("bind: {:?}, {:?}", *var, *id);
-            mapping.insert(*var, *id);
-            // loop over the rest of the pattern
-            for (pat, node) in sp.iter().zip(sd.iter()) { match (pat, node) {
-                (Id(v), Id(i)) => {
-                    println!("bind-rec: {:?}, {:?}", *v, *i);
-
-                    if let Some(_) = self.redex.get(*v) {
-                        // ensure non-empty sub-terms also match.
-                        // don't bind before-hand, matches will do this for us.
-                        mapping = self.matches_rec(*v, data, *i, mapping)?;
-                    } else {
-                        // just bind the id in the mapping.
-                        mapping.insert(*v, *i);
-                    }
-
-                    println!("recurse-done {:?}", mapping);
-                },
-
-                // Ensure two constructors are the same.
-                (Constructor(x), Constructor(y)) if x == y => (),
-
-                // Early return if any subterms fail to match
-                (x, y) => {
-                    println!("fail: {:?} != {:?}", x, y);
-                    return None
-                }
-                //mapping = matches_term(pat, node, mapping)?;
-            } }
-
-            println!("success: {:?}", mapping);
-            Some(mapping)
+    pub fn matches<M: Mapping<T>>(&self, data: &impl DataGraph<T>) -> Option<M> {
+        let mut m = M::new();
+        if let Some(()) = self.redex.matches(
+            self.redex.root(),
+            data,
+            data.root(),
+            &mut m
+        ) {
+            Some(m)
         } else {
-            println!("fail: {:?} != {:?}", x, y);
             None
         }
     }
 
-    /*
-    pub fn rewrite(&self, data: DataGraph<T>) -> DataGraph<T> {
-        if let Some(mapping) = self.matches((&data, data.root())) {
-            let rewritten = self.rewrite_rec(data, data.root(), &mapping);
-            data.set(data.root()) 
+    pub fn rewrite<M: Mapping<T>>(&self, data: &mut impl DataGraph<T>) -> bool {
+        let map: Option<M> = self.matches(data);
+        if let Some(mapping) = map {
+            self.contractum.rewrite(self.contractum.root(), data, &mapping);
+            // XXX: this is an extra step, which ideally we could
+            // avoid by directly writing into the redirection node.
+            //
+            // XXX: not clear we even need redirections given a
+            // functional strategy.
+            data.redirect(
+                mapping.get(self.redirection.0),
+                mapping.get(self.redirection.1)
+            );
+            true
         } else {
-            data
+            false
         }
-    }*/
+    }
 }
 
 
-struct CanonicalGRS<T: Types>(Vec<CanonicalRule<T>>);
+type CanonicalForm<Id, Val> = (Id, Val, [Id]);
 
 
+// Leaving this here for now, we'll get to it soon enough.
+/*
 macro_rules! node {
-    ($id:expr ; $func:expr) => {
-        CanonicalNode {
-            id: $id,
-            function: $func,
-            rest: vec![]
-        }
-    };
-
+    ($id:expr ; $func:expr) => {($id, $func, [])};
     ($id:expr ; $func:expr, $( $rest:expr ),+ ) => {
-        CanonicalNode {
-            id: $id,
-            function: $func,
-            rest: vec![$($rest),*]
-        }
-    };
+        ($id, $func, vec![$($rest),*])
+    }
 }
 
 macro_rules! graph {
@@ -256,28 +256,30 @@ macro_rules! rule {
             redirection: ($red, $con)
         }
     };
-}
+}*/
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
+    // Demonstration of BYOT (Bring Your Own Types)
+    //
     // We can get away with a limited set of identifiers for
-    // tests. Thes are lower-case to match the literature. Variables
-    // in rules are typically lower case, while constants are
-    // CamelCase or just a capital letter.
+    // tests. Thes are lower-case to match the literature, where
+    // pattern variables typically lower case, while constants are
+    // CamelCase or just a single capital letter.
     #[allow(non_camel_case_types)]
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-    enum Symbols {a, b, c, d, m, n, o, x, y, z}
+    enum Symbol {a, b, c, d, m, n, o, x, y, z}
 
     // We can get away with a limited set of "constant" values as
     // well.
     #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-    enum Values {Start, Add, If, True, False, Int(i8), Zero, Succ, Hd, Cons}
+    enum Value {Start, Add, If, True, False, Int(i8), Zero, Succ, Hd, Cons}
 
-    // We can punt on sigma rules for now.
-    impl SigmaRules for Values {
+    impl SigmaRules for Value {
         type Error = ();
     }
 
@@ -285,71 +287,72 @@ mod tests {
     struct TestTypes;
 
     impl Types for TestTypes {
-        type Var = Symbols;
-        type Val = Values;
+        type Var = Symbol;
+        type Val = Value;
         type Id  = u8;
     }
 
-    type TestGrs = CanonicalGRS<TestTypes>;
+    impl<'a> DataGraphBody<'a, TestTypes> for Vec<(Value, Vec<u8>)> {
+        type It = core::iter::Copied<core::slice::Iter<'a, u8>>;
+
+        fn new() -> Self { Vec::new() }
+
+        fn value(&'a self, id: u8) -> Value {
+            self[id as usize].0
+        }
+
+        fn args(&'a self, id: u8) -> Self::It {
+            self[id as usize].1.iter().copied()
+        }
+        fn alloc(&'a mut self, func: Value) -> u8 {
+            self.push((func, Vec::new()));
+            let len = self.len();
+            if len == 256 {
+                panic!("storage exhausted");
+            }
+            (len - 1) as u8
+        }
+
+        fn append_arg(&'a mut self, id: u8, arg: u8) {
+            self[id as usize].1.push(arg);
+        }
+
+        fn redirect(&'a mut self, src: u8, dst: u8) {
+            self.swap(src as usize, dst as usize)
+        }
+
+        fn root(&'a self) -> u8 { 0 }
+    }
+
+    impl Mapping<TestTypes> for HashMap<Symbol, u8> {
+        fn new() -> Self { HashMap::new() }
+        fn get(&self, var: Symbol) -> u8 { self[&var] }
+        fn bind(&mut self, var: Symbol, id: u8) {
+            self.insert(var, id);
+        }
+    }
+
+    impl<'a> PatternBody<'a, TestTypes>
+        for (HashMap<Symbol, (Value, Vec<Symbol>)>, Symbol)
+    {
+        type It = core::iter::Copied<core::slice::Iter<'a, Symbol>>;
+
+        fn contains(&'a self, id: Symbol) -> bool {
+            self.0.contains_key(&id)
+        }
+
+        fn value(&'a self, id: Symbol) -> Value {
+            self.0[&id].0
+        }
+
+        fn args(&'a self, id: Symbol) -> Self::It {
+            self.0[&id].1.iter().copied()
+        }
+
+        fn root(&'a self) -> Symbol { self.1 }
+    }
 
     #[test]
-    fn test_rules() {
-        use Symbols::*;
-        use Values::*;
-        use CanonicalTerm::*;
-
-        // example from the book:
-        //
-        // x: Add y z
-        // z: Zero    -> x := z
-        //
-        // x: Add y z,
-        // y: Succ a  -> m: Succ n, n: Add a z, x := m
-        //
-        // x: Start   -> m: Add n o, n: Succ o, o: Zero, x := m
-        let grs: TestGrs = CanonicalGRS(vec![
-            rule! {
-                graph! {
-                    node! {x; Add, Id(y), Id(z)},
-                    node! {z; Zero}
-                } => graph! {}; x => z
-            }, rule! {
-                graph! {
-                    node! {x; Add,  Id(y), Id(z)},
-                    node! {y; Succ, Id(a)}
-                } => graph! {
-                    node! {m; Succ, Id(n)},
-                    node! {n; Add,  Id(a), Id(z)}
-                }; x => m
-            }, rule!{
-                graph! {
-                    node!(x; Start)
-                } => graph!{
-                    node!(m; Add,  Id(n), Id(o)),
-                    node!(n; Succ, Id(o)),
-                    node!(o; Zero)
-                }; x => m
-            },
-        ]);
-
-
-        let data = graph![
-            node!(0; Add, Id(1), Id(1) ),
-            node!(1; Zero)
-        ];
-
-        assert_eq!(
-            grs.0[0].matches(&data, data.root()),
-            Some(HashMap::from([
-                (x, 0),
-                (y, 1),
-                (z, 1)
-            ]))
-        );
-
-        assert_eq!(
-            grs.0[1].matches(&data, data.root()),
-            None
-        );
+    fn test_grs() {
     }
 }

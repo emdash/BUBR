@@ -25,7 +25,51 @@
 // Fork this project to create your own MIT license that you can
 // always link to.
 use core::fmt::Debug;
-use crate::{debug, Types};
+use crate::debug;
+
+
+/**
+ * This module provides types and algorithms for general Term Reduction
+ * Systems.
+ *
+ * TRS are thought to be less efficient than GRSs, since the TRS will
+ * duplicate work which the GRS can avoid. What I am curious to see;
+ * however, is in which practical situations this is actually true.
+ *
+ * How do TRS and GRS systems really compare on modern hardware?  Are
+ * there simple optimizations we can apply to TRS implementations
+ * (e.g. memozation) that close the performance gap?
+ */
+
+
+/**
+ * Trait for operations external to pure lambda calculus.
+ *
+ * See tests for an examples of how this is used.
+ */
+pub trait SigmaRules: Sized {
+    type Error: Sized + Debug + Default;
+
+    fn apply(_f: Self, _x: Self) -> Result<Self, Self::Error> {
+        Err(Self::Error::default())
+    }
+}
+
+
+/**
+ * A container for various trait bounds.
+ *
+ * This gives us some parametricity without having where clauses
+ * proliferate everywhere.
+ */
+pub trait Types {
+    // A type which represents a "constant" value in the lambda calc.
+    type Val: Debug + Clone + SigmaRules;
+    // A type which represents a "symbol" in the lambda calc, usually
+    // String. But if you want to replace this with an integer, or a
+    // custom type, you can.
+    type Sym: Debug + Clone + PartialEq;
+}
 
 
 /**
@@ -111,7 +155,6 @@ impl<T: Types> TermReductionSystem<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SigmaRules, Types};
 
     // We can get away with a limited set of identifiers for
     // tests. Thes are lower-case to match the literature. Variables
