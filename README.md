@@ -16,6 +16,7 @@ Rules:
 - No unsafe code(*).
 - No dependencies.
 - Allow for 100% static dispatch.
+- Allow no-std usage.
 
 Goals:
 - Focus on runtime reduction, rather than compilation.
