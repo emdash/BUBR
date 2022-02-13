@@ -58,7 +58,7 @@ trait Types {
  * This trait maps vars to IDs for rule rewriting.
  */
 trait Mapping<T: Types>: Debug {
-    fn empty() -> Self;
+    fn new() -> Self;
     fn get(&self, var: T::Var) -> T::Id;
     fn bind(&mut self, var: T::Var, id: T::Id);
 }
@@ -96,6 +96,7 @@ trait Mapping<T: Types>: Debug {
 trait DataGraph<T: Types>: for <'a> DataGraphBody<'a, T> {}
 trait DataGraphBody<'a, T: Types> {
     type It: Iterator<Item = T::Id>;
+    fn new() -> Self;
     fn args(&'a self, id: T::Id) -> Self::It;
     fn value(&'a self, id: T::Id) -> T::Val;
     fn alloc(&'a mut self, func: T::Val) -> T::Id;
@@ -183,10 +184,10 @@ struct CanonicalRule<T: Types, P: Pattern<T>> {
 impl<T: Types, P: Pattern<T>> CanonicalRule<T, P> {
     /**
      * If a rule matches the subgraph rooted at `node`, return the
-     * mapping of variables to node ideas..
+     * mapping of variables to node ids.
      */
     pub fn matches<M: Mapping<T>>(&self, data: &impl DataGraph<T>) -> Option<M> {
-        let mut m = M::empty();
+        let mut m = M::new();
         if let Some(()) = self.redex.matches(
             self.redex.root(),
             data,
@@ -219,18 +220,12 @@ impl<T: Types, P: Pattern<T>> CanonicalRule<T, P> {
     }
 }
 
-/*
+
 type CanonicalForm<Id, Val> = (Id, Val, [Id]);
-
-fn into_dg(dg: impl DataGraph<T>, nodes: CanonicalGraph) -> dg {
-    
-    for (id, func, args) in nodes {
-
-}*/
 
 
 macro_rules! node {
-    ($id:expr ; $func:expr) => {($id, $func, vec![])};
+    ($id:expr ; $func:expr) => {($id, $func, [])};
     ($id:expr ; $func:expr, $( $rest:expr ),+ ) => {
         ($id, $func, vec![$($rest),*])
     }
@@ -284,6 +279,8 @@ mod tests {
     impl<'a> DataGraphBody<'a, TestTypes> for Vec<(Value, Vec<u8>)> {
         type It = core::iter::Copied<core::slice::Iter<'a, u8>>;
 
+        fn new() -> Self { Vec::new() }
+
         fn value(&'a self, id: u8) -> Value {
             self[id as usize].0
         }
@@ -312,7 +309,7 @@ mod tests {
     }
 
     impl Mapping<TestTypes> for HashMap<Symbol, u8> {
-        fn empty() -> Self { HashMap::new() }
+        fn new() -> Self { HashMap::new() }
         fn get(&self, var: Symbol) -> u8 { self[&var] }
         fn bind(&mut self, var: Symbol, id: u8) {
             self.insert(var, id);
