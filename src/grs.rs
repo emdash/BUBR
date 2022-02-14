@@ -55,7 +55,7 @@ pub trait SigmaRules: Sized {
  * Using this to factor out a ton of repeated trait bounds and where
  * clauses into one place.
  */
-trait Types {
+pub trait Types {
     // The data contained within a node.
     type Val: Debug + Copy + PartialEq + SigmaRules;
     // Id of nodes in a data graph
@@ -68,7 +68,7 @@ trait Types {
 /**
  * This trait maps vars to IDs for rule rewriting.
  */
-trait Mapping<T: Types>: Debug {
+pub trait Mapping<T: Types>: Debug {
     fn new() -> Self;
     fn get(&self, var: T::Var) -> T::Id;
     fn bind(&mut self, var: T::Var, id: T::Id);
@@ -77,19 +77,39 @@ trait Mapping<T: Types>: Debug {
 
 /**
  * Abstract over mutable runtime data representations.
+ *
+ * One concrete and opinionated choice I've made here, which I may or
+ * may not come to regret, is that the "args" of a node in the graph
+ * *must* be node ids, rather than *either* nodes *or* values.
+ *
+ * This means that values cannot appear in the "constructor position",
+ * as in Clean. I am interested in "performant" implementations, and
+ * allowing this here seems to place some constraints on performance,
+ * at least to my mind.
+ *
+ * I am willing to revisit this at a later date, or else define a
+ * parallel trait which does allow for node arguments to be
+ * either. For now, I am punting on terms appearing in the
+ * "constructor position".
  */
-// XXX: I would have liked to just do:
-// // fn args(&self, id: T::Id) -> impl Iterator<Item=T::Id>;
-// but impl Trait is not allowed within a trait.
+// XXX: Notes for the near future
 //
-// The next thing I tried was this.
-// // type It: impl Iterator<Item=T::Id>;
-// // fn args(&self, id: T::Id) -> Self::It;
+// As *soon* as GATs stablize, I want to refactor these traits to take
+// full advantage of them.
 //
-// This made the trait unimplementable, since there was no way to
-// introduce the lifetime <'a> in the impl, since merely using it to
-// specify the associated item It: core::slice::Iter<&'a, T> doesn't
-// count...
+// I would have liked to do:
+// `fn args(&self, id: T::Id) -> impl Iterator<Item=T::Id>;`
+// but `impl Trait` is not allowed within a trait.
+//
+// The next thing I tried was:
+// `type It: impl Iterator<Item=T::Id>;`
+// `fn args(&self, id: T::Id) -> Self::It;`
+//
+// This made the trait *unimplementable*, since there was no way to
+// introduce the lifetime `<'a>` in the impl, since merely using it to
+// specify the associated item `It: core::slice::Iter<&'a, T>` doesn't
+// count as "use" for some reason, and that is a rust pitfall that
+// makes me mad every time I step on it.
 //
 // I googled around, and found this wierd pattern using HRTB:
 // https://stackoverflow.com/questions/60459609/
@@ -98,14 +118,18 @@ trait Mapping<T: Types>: Debug {
 // is sound, or idiomatic, or what. But it seems to solve the problem.
 //
 // I need to learn more about how HRTB work and see if this can be
-// made simpler, or else abstracted into a hack.
+// made simpler (like *only* using it on the associated function),
+// rather than this two-tier type hack.
 //
-// Another, simpler way of doing this would involve GATs, which are
-// not yet stabilized, but should be soon.
+// If GATs stabilizde before I get to this, then it's simple enough to
+// just define:
+//
+// `type It<'a>: Iterator<Item = T::Id>;`, and then
+// `fn args<'a>(&'a self, id: T::Id) -> Self::It<'a>`
 //
 // Still another interesting feature would be type-alias-impl-trait.
-trait DataGraph<T: Types>: for <'a> DataGraphBody<'a, T> {}
-trait DataGraphBody<'a, T: Types> {
+pub trait DataGraph<T: Types>: for <'a> DataGraphBody<'a, T> {}
+pub trait DataGraphBody<'a, T: Types> {
     type It: Iterator<Item = T::Id>;
     fn new() -> Self;
     fn args(&'a self, id: T::Id) -> Self::It;
@@ -121,15 +145,15 @@ trait DataGraphBody<'a, T: Types> {
 /**
  * Abstract over immutable runtime pattern representations.
  */
-trait Pattern<T: Types>: for <'a> PatternBody<'a, T> {}
-trait PatternBody<'a, T: Types> {
+pub trait Pattern<T: Types>: for <'a> PatternBody<'a, T> {}
+pub trait PatternBody<'a, T: Types> {
     type It: Iterator<Item=T::Var>;
-
     fn contains(&'a self, id: T::Var) -> bool;
     fn value(&'a self, id: T::Var) -> T::Val;
     fn args(&'a self, id: T::Var) -> Self::It;
     fn root(&'a self) -> T::Var;
 
+    // versions of this.
     fn matches(
         &'a self,
         redex: T::Var,
@@ -153,7 +177,7 @@ trait PatternBody<'a, T: Types> {
                 } else {
                     mapping.bind(var, id);
                 }
-                 println!("recurse-done {:?}", mapping);
+                println!("recurse-done {:?}", mapping);
             }
             println!("success: {:?}", mapping);
             Some(())
@@ -183,16 +207,14 @@ trait PatternBody<'a, T: Types> {
 }
 
 
-/**
- * A rewrite rule in canonical form.
- */
-struct CanonicalRule<T: Types, P: Pattern<T>> {
-    redex: P,
-    contractum: P,
+pub struct Rule<T, P> where T: Types, P: Pattern<T>{
+    redex:       P,
+    contractum:  P,
     redirection: (T::Var, T::Var)
 }
 
-impl<T: Types, P: Pattern<T>> CanonicalRule<T, P> {
+
+impl<T, P> Rule<T, P> where T: Types, P: Pattern<T> {
     /**
      * If a rule matches the subgraph rooted at `node`, return the
      * mapping of variables to node ids.
@@ -211,7 +233,10 @@ impl<T: Types, P: Pattern<T>> CanonicalRule<T, P> {
         }
     }
 
-    pub fn rewrite<M: Mapping<T>>(&self, data: &mut impl DataGraph<T>) -> bool {
+    /**
+     *
+     */
+    pub fn reduce<M: Mapping<T>>(&self, data: &mut impl DataGraph<T>) -> Option<()> {
         let map: Option<M> = self.matches(data);
         if let Some(mapping) = map {
             self.contractum.rewrite(self.contractum.root(), data, &mapping);
@@ -224,31 +249,102 @@ impl<T: Types, P: Pattern<T>> CanonicalRule<T, P> {
                 mapping.get(self.redirection.0),
                 mapping.get(self.redirection.1)
             );
-            true
+            Some(())
         } else {
-            false
+            None
         }
     }
 }
 
 
-type CanonicalForm<Id, Val> = (Id, Val, [Id]);
+/**
+ * This type is the "true" abstract representation of a GRS.
+ *
+ * All of the interesting algorithms in this module are really
+ * operating on some concrete realization of the "canonical form".
+ *
+ * Whether it's a graph is pattern or data depends on the choice of Id
+ * / Val with respect to T., which aliases are provided.
+ */
+pub mod canonical {
+    use super::Types;
+    pub struct Node <NodeId, Val>(NodeId, Val, Vec<NodeId>);
+    pub struct Graph<NodeId, Val>(Vec<Node<NodeId, Val>>);
+    pub type DataGraph<T: Types> = Graph<T::Id,  T::Val>;
+    pub type Pattern  <T: Types> = Graph<T::Var, T::Val>;
+
+    pub struct Rule<T: Types> {
+        redex: Pattern<T>,
+        contractum: Pattern<T>,
+        redirection: (T::Var, T::Var)
+    }
+
+    pub struct GRS<T: Types>(Vec<Rule<T>>);
+}
 
 
-// Leaving this here for now, we'll get to it soon enough.
-/*
-macro_rules! node {
+/**
+ * This type is the abstract syntax for the "shorthand" GRS notation.
+ *
+ * Basically, it elides node IDs when they are clear from context,
+ * instead allowing them to nest, as in a TRS. A simple algorithm
+ * flattens this to canonical form.
+ *
+ * The main distinction between ShorthandForm and a TRS is that nodes
+ * can be named when desired, which allows for cyclical patterns and
+ * data.
+ *
+ * In the literature, the shorthand form is mainly intended for
+ * patterns, but I can't justify going out of my way to restrict it to
+ * patterns.
+ */
+mod shorthand {
+    use super::Types;
+
+    pub enum Node<NodeId, Val> {
+        Empty,
+        Anon(Vec<Arg<NodeId, Val>>),
+        Labeled(NodeId, Vec<Arg<NodeId, Val>>)
+    }
+
+    pub enum Arg<NodeId, Val> {
+        Ref(NodeId),
+        // To make Rust happy and not be stuck with an obnoxious
+        // PhantomData<Val> in this enum, I added this variant, even
+        // though canonical form as I defined it doesen't support
+        // "constructor position". This will be flattened as:
+        // `Arg::SubTerm(Some(id), box![Node::Anon(val)])`
+        Label(NodeId, Val),
+        // or make the above Ref(Option<NodeId>, Option<Symbol>)
+        SubTerm(Option<NodeId>, Box<Node<NodeId, Val>>)
+    }
+
+    pub struct Graph<NodeId, Val>(Vec<Node<NodeId, Val>>);
+    pub type DataGraph<T: Types> = Graph<T::Id,  T::Val>;
+    pub type Pattern  <T: Types> = Graph<T::Var, T::Val>;
+
+    enum Rule<T: Types> {
+        Reduce  (Pattern<T>, Pattern<T>),
+        Redirect(Pattern<T>, (T::Var, T::Var)),
+        ReduceAndRedirect(Pattern<T>, Pattern<T>, (T::Var, T::Var))
+    }
+
+    pub struct GRS<T: Types>(Vec<Rule<T>>);
+
+
+    /*
+    macro_rules! node {
     ($id:expr ; $func:expr) => {($id, $func, [])};
     ($id:expr ; $func:expr, $( $rest:expr ),+ ) => {
         ($id, $func, vec![$($rest),*])
     }
 }
 
-macro_rules! graph {
+    macro_rules! graph {
     ($($nodes:expr),*) => {CanonicalGraph::new(vec![$($nodes),*])};
 }
 
-macro_rules! rule {
+    macro_rules! rule {
     ($redex:expr => $contractum:expr ; $red:expr => $con:expr) => {
         CanonicalRule {
             redex: $redex,
@@ -257,6 +353,8 @@ macro_rules! rule {
         }
     };
 }*/
+
+}
 
 
 #[cfg(test)]
