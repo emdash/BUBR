@@ -25,6 +25,11 @@
 // Fork this project to create your own MIT license that you can
 // always link to.
 
+/**
+ * This module provides an abstract representation for constructing
+ * concrete GRSs.
+ */
+
 
 /**
  * This module is the abstract syntax of a canonical GRS.

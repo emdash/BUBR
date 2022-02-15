@@ -26,6 +26,13 @@
 // always link to.
 use core::fmt::Debug;
 
+/**
+ * This module provides the core traits for FGRS, and algorithms
+ * defined on those traits.
+ *
+ * For concrete implementations, see other library modules.
+ */
+
 
 /**
  * Trait for operations external to pure lambda calculus.
