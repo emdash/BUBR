@@ -42,13 +42,6 @@ pub trait SigmaRules: Sized {
 
 
 /**
- * Now we're working on ch 5 of FPGR.
- *
- * This module is a toy graph re-writing system (GRS).
- */
-
-
-/**
  * This is the "type context" for the data-structures and algorithms
  * in this crate.
  *
@@ -207,6 +200,9 @@ pub trait PatternBody<'a, T: Types> {
 }
 
 
+/**
+ * This is the generic rule struct which implements reduction.
+ */
 pub struct Rule<T, P> where T: Types, P: Pattern<T>{
     redex:       P,
     contractum:  P,
@@ -219,12 +215,12 @@ impl<T, P> Rule<T, P> where T: Types, P: Pattern<T> {
      * If a rule matches the subgraph rooted at `node`, return the
      * mapping of variables to node ids.
      */
-    pub fn matches<M: Mapping<T>>(&self, data: &impl DataGraph<T>) -> Option<M> {
+    pub fn matches<M: Mapping<T>>(&self, data: &impl DataGraph<T>, node: T::Id) -> Option<M> {
         let mut m = M::new();
         if let Some(()) = self.redex.matches(
             self.redex.root(),
             data,
-            data.root(),
+            node,
             &mut m
         ) {
             Some(m)
@@ -236,8 +232,11 @@ impl<T, P> Rule<T, P> where T: Types, P: Pattern<T> {
     /**
      *
      */
-    pub fn reduce<M: Mapping<T>>(&self, data: &mut impl DataGraph<T>) -> Option<()> {
-        let map: Option<M> = self.matches(data);
+    pub fn reduce<D, M>(&self, data: &mut D, node: T::Id) -> Option<()>
+        where D: DataGraph<T>,
+              M: Mapping<T>
+    {
+        let map: Option<M> = self.matches(data, node);
         if let Some(mapping) = map {
             self.contractum.rewrite(self.contractum.root(), data, &mapping);
             // XXX: this is an extra step, which ideally we could
@@ -258,102 +257,82 @@ impl<T, P> Rule<T, P> where T: Types, P: Pattern<T> {
 
 
 /**
- * This type is the "true" abstract representation of a GRS.
+ * A strategy finds candidates for reduction in a datagraph.
  *
- * All of the interesting algorithms in this module are really
- * operating on some concrete realization of the "canonical form".
- *
- * Whether it's a graph is pattern or data depends on the choice of Id
- * / Val with respect to T., which aliases are provided.
+ * A serial strategy indicates one redex at a time. For now this is
+ * all that's supported.
  */
-pub mod canonical {
-    use super::Types;
-    pub struct Node <NodeId, Val>(NodeId, Val, Vec<NodeId>);
-    pub struct Graph<NodeId, Val>(Vec<Node<NodeId, Val>>);
-    pub type DataGraph<T: Types> = Graph<T::Id,  T::Val>;
-    pub type Pattern  <T: Types> = Graph<T::Var, T::Val>;
-
-    pub struct Rule<T: Types> {
-        redex: Pattern<T>,
-        contractum: Pattern<T>,
-        redirection: (T::Var, T::Var)
-    }
-
-    pub struct GRS<T: Types>(Vec<Rule<T>>);
+pub trait Strategy<T: Types> {
+    fn next_redex(&mut self, dg: &impl DataGraph<T>) -> Option<T::Id>;
 }
 
 
 /**
- * This type is the abstract syntax for the "shorthand" GRS notation.
- *
- * Basically, it elides node IDs when they are clear from context,
- * instead allowing them to nest, as in a TRS. A simple algorithm
- * flattens this to canonical form.
- *
- * The main distinction between ShorthandForm and a TRS is that nodes
- * can be named when desired, which allows for cyclical patterns and
- * data.
- *
- * In the literature, the shorthand form is mainly intended for
- * patterns, but I can't justify going out of my way to restrict it to
- * patterns.
+ * A complete GRS.
  */
-mod shorthand {
-    use super::Types;
-
-    pub enum Node<NodeId, Val> {
-        Empty,
-        Anon(Vec<Arg<NodeId, Val>>),
-        Labeled(NodeId, Vec<Arg<NodeId, Val>>)
-    }
-
-    pub enum Arg<NodeId, Val> {
-        Ref(NodeId),
-        // To make Rust happy and not be stuck with an obnoxious
-        // PhantomData<Val> in this enum, I added this variant, even
-        // though canonical form as I defined it doesen't support
-        // "constructor position". This will be flattened as:
-        // `Arg::SubTerm(Some(id), box![Node::Anon(val)])`
-        Label(NodeId, Val),
-        // or make the above Ref(Option<NodeId>, Option<Symbol>)
-        SubTerm(Option<NodeId>, Box<Node<NodeId, Val>>)
-    }
-
-    pub struct Graph<NodeId, Val>(Vec<Node<NodeId, Val>>);
-    pub type DataGraph<T: Types> = Graph<T::Id,  T::Val>;
-    pub type Pattern  <T: Types> = Graph<T::Var, T::Val>;
-
-    enum Rule<T: Types> {
-        Reduce  (Pattern<T>, Pattern<T>),
-        Redirect(Pattern<T>, (T::Var, T::Var)),
-        ReduceAndRedirect(Pattern<T>, Pattern<T>, (T::Var, T::Var))
-    }
-
-    pub struct GRS<T: Types>(Vec<Rule<T>>);
+pub struct GRS<T, P>(Vec<Rule<T, P>>)
+where T: Types, P: Pattern<T>;
 
 
-    /*
-    macro_rules! node {
-    ($id:expr ; $func:expr) => {($id, $func, [])};
-    ($id:expr ; $func:expr, $( $rest:expr ),+ ) => {
-        ($id, $func, vec![$($rest),*])
-    }
-}
-
-    macro_rules! graph {
-    ($($nodes:expr),*) => {CanonicalGraph::new(vec![$($nodes),*])};
-}
-
-    macro_rules! rule {
-    ($redex:expr => $contractum:expr ; $red:expr => $con:expr) => {
-        CanonicalRule {
-            redex: $redex,
-            contractum: $contractum,
-            redirection: ($red, $con)
+impl<T, P> GRS<T, P>
+where T: Types, P: Pattern<T> {
+    /**
+     * Perform one reduction step on the the given datagraph using the
+     * given strategy.
+     *
+     * We try each rule in succession, chosing the first one which
+     * succeeds in reduction. This is not necessarily the case in a
+     * general GRS.
+     *
+     * In the literature, the strategy indicates the redex *and* the
+     * rule by which we reduce. Here, the strategy just indicates the
+     * redex, and we search through our list of rules until we find
+     * one that matches.
+     *
+     * At some point I should revisit this, but I just want to get
+     * something working for now, and I'm not sure how important this
+     * distinction really is. It should be easy enough to change down
+     * the road.
+     */
+    pub fn reduce<D, M> (
+        &self,
+        data: &mut D,
+        node: T::Id
+    ) -> Option<()> where
+        D: DataGraph<T>,
+        M: Mapping<T>
+    {
+        for rule in self.0.iter() {
+            if let Some(()) = rule.reduce::<D, M>(data, node) {
+                return Some(())
+            }
         }
-    };
-}*/
+        None
+    }
+}
 
+
+/**
+ * Repeatedly reduce a datagraph until no further reductions are
+ * indicated.
+ */
+pub fn reduce<T, D, P, S, M>(
+    grs: &GRS<T, P>,
+    data: &mut D,
+    strategy: S
+) -> Option<()> where T: Types,
+                      D: DataGraph<T>,
+                      P: Pattern<T>,
+                      M: Mapping<T>,
+                      S: Strategy<T>
+
+    {
+    let mut strategy = strategy;
+    while let Some(next) = strategy.next_redex(data) {
+        grs.reduce::<D, M>(data, next)?;
+    }
+
+    Some(())
 }
 
 

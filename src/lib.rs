@@ -47,5 +47,7 @@ pub fn debug<T: Debug>(prefix: &str, value: T) -> T {
  * Just to get oriented, we start with a simple lambda expression
  * parser and evaluator.
  */
-mod trs;
-mod grs;
+pub mod trs;
+pub mod grs;
+pub mod ast;
+
