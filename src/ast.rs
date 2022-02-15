@@ -69,7 +69,7 @@ pub mod canonical {
  * patterns, but I can't justify going out of my way to restrict it to
  * patterns.
  */
-mod shorthand {
+pub mod shorthand {
     use crate::grs::Types;
 
     pub enum Node<NodeId, Val> {
@@ -94,7 +94,7 @@ mod shorthand {
     pub type DataGraph<T: Types> = Graph<T::Id,  T::Val>;
     pub type Pattern  <T: Types> = Graph<T::Var, T::Val>;
 
-    enum Rule<T: Types> {
+    pub enum Rule<T: Types> {
         Reduce  (Pattern<T>, Pattern<T>),
         Redirect(Pattern<T>, (T::Var, T::Var)),
         ReduceAndRedirect(Pattern<T>, Pattern<T>, (T::Var, T::Var))

@@ -50,4 +50,4 @@ pub fn debug<T: Debug>(prefix: &str, value: T) -> T {
 pub mod trs;
 pub mod grs;
 pub mod ast;
-
+pub mod parser;

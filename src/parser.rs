@@ -104,16 +104,55 @@ pub enum Token<Id, Val> {
 //
 // This means you have to write some trivial functions to just *call*
 // the code you're writing, at which point the compiler often crushes
-// your beautiful vision, forcing you to start refactoring
-// ... unfortunately Rust is not always forgiving with refactoring,
-// owing to the various asymmetries in the language.
+// your beautiful vision. You want this to happen as early as possible.
 //
-// Anyway, it's better than a 3AM call.
+// At least it's better than a 3AM call.
 
-pub fn parse_grs
 
-pub fn parse_graph<Id, Val>(impl Iterator<Item=Token<C, I>>) -> Graph<Id, Val> {
-    panic!("I'm not implemented");
+pub fn parse_grs<T: Types>(input: impl Iterator<Item=Token<T::Var, T::Val>>) -> GRS<T> {
+    // it gets boring writing "NotImplemented" over and over, so I'm
+    // inserting Ralf Wiggum quotes.
+    panic!("I'm unpossible!");
 }
 
-pub fn 
+pub fn parse_data<T: Types>(input: impl Iterator<Item=Token<T::Id, T::Val>>) -> DataGraph<T> {
+    panic!("foobar");
+}
+
+pub fn parse_rule<T: Types>(input: impl Iterator) -> GRS<T> {
+    panic!("I'm happy *AND ANGRY!*!");
+}
+
+pub fn parse_pattern<T: Types>(input: impl Iterator) -> Pattern<T> {
+    panic!("It tastes like burning!"); // ralphs quotes are dark :/
+}
+
+pub fn parse_graph<Id, Val>(input: impl Iterator<Item=Token<Id, Val>>) -> Graph<Id, Val> {
+    panic!("I can do a summersault!");
+}
+
+pub fn parse_node<Id, Val>(input: impl Iterator<Item=Token<Id, Val>>) -> Node<Id, Val> {
+    panic!("");
+}
+
+pub fn parse_arg<Id, Val>(input: impl Iterator<Item=Token<Id, Val>>) -> Arg<Id, Val> {
+    panic!("");
+}
+
+pub fn parse_node_def<Id, Val>(input: impl Iterator<Item=Token<Id, Val>>) -> Node<Id, Val> {
+    panic!("");
+}
+
+pub fn parse_redirection<T: Types>(input: impl Iterator<Item=Token<T::Var, T::Val>>) -> Rule<T> {
+    panic!("");
+}
+
+// Terminals
+
+pub fn parse_node_id<Id, Val>(input: impl Iterator<Item=Token<Id, Val>>) -> Id {
+    panic!("Running out of ralph wiggum quotes");
+}
+
+pub fn parse_empty_node<Id, Val>(input: impl Iterator<Item=Token<Id, Val>>) -> Id {
+    panic!("");
+}
