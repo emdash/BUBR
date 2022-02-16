@@ -67,7 +67,8 @@ use crate::grs::Types;
  */
 
 pub enum Token<Id, Val> {
-    Arrow,
+    ArrowShaft,
+    ArrowTip,
     Comma,
     Colon,
     Open,
@@ -155,4 +156,135 @@ pub fn parse_node_id<Id, Val>(input: impl Iterator<Item=Token<Id, Val>>) -> Id {
 
 pub fn parse_empty_node<Id, Val>(input: impl Iterator<Item=Token<Id, Val>>) -> Id {
     panic!("");
+}
+
+
+mod lexer {
+    use super::Token;
+    use core::marker::PhantomData;
+
+    enum State {
+        Start,
+        Symbol(String),
+        NodeId(String),
+    }
+
+    enum Action<Id, Val> {
+        Next(State),
+        EmitOne(Token<Id, Val>, State),
+        // When an operator ends a word.
+        EmitTwo(Token<Id, Val>, Token<Id, Val>),
+        Unexpected(char)
+    }
+
+    enum CharType<Id, Val> {
+        Whitespace,
+        Operator(Token<Id, Val>),
+        SymbolStart,
+        SymbolChar
+    }
+
+    pub struct SimpleLexer<Id, Val, I>(
+        I,
+        State,
+        PhantomData<(Id, Val)>
+    ) where I: Iterator<Item=char>;
+
+    impl<Id, Val, I> SimpleLexer<Id, Val, I>
+    where Id: From<String>,
+          Val: From<String>,
+          I: Iterator<Item=char>
+    {
+        pub fn new(input: I) -> Self {
+            SimpleLexer(input, State::Start, PhantomData)
+        }
+
+        fn push(s: String, c: char) -> String {
+            let mut s = s;
+            s.push(c);
+            s
+        }
+
+        fn sym(s: String) -> Token<Id, Val> {
+            Token::Symbol(Val::from(s))
+        }
+
+        fn id(s: String) -> Token<Id, Val> {
+            Token::NodeId(Id::from(s))
+        }
+
+        fn pushs(s: String, c: char) -> State {
+            State::Symbol(Self::push(s, c))
+        }
+
+        fn pushi(s: String, c: char) -> State {
+            State::NodeId(Self::push(s, c))
+        }
+
+        fn classify(c: char) -> CharType<Id, Val> { match c {
+            ' '                     => CharType::Whitespace,
+            '\n'                    => CharType::Whitespace,
+            '\r'                    => CharType::Whitespace,
+            '\t'                    => CharType::Whitespace,
+            '-'                     => CharType::Operator(Token::ArrowShaft),
+            '>'                     => CharType::Operator(Token::ArrowTip),
+            '('                     => CharType::Operator(Token::Open),
+            ')'                     => CharType::Operator(Token::Close),
+            ':'                     => CharType::Operator(Token::Colon),
+            '_'                     => CharType::Operator(Token::Empty),
+            '='                     => CharType::Operator(Token::Redirect),
+            'x' if c.is_uppercase() => CharType::SymbolStart,
+             _                      => CharType::SymbolChar
+        } }
+
+        fn lex(&mut self, c: char) -> Action<Id, Val> {
+            use Action::*;
+            use CharType::*;
+            use State::*;
+            use core::mem::replace;
+            // use Self::*;
+            match (replace(&mut self.1, State::Start), Self::classify(c)) {
+                (Start,     Whitespace)    => Next(                      Start),
+                (Start,     Operator(tok)) => EmitOne(tok,               Start),
+                (Start,     SymbolStart)   => Next(      Symbol(String::new())),
+                (Start,     SymbolChar)    => Next(      NodeId(String::new())),
+
+                (Symbol(k), Whitespace)    => EmitOne(Self::sym(k),      Start),
+                (Symbol(k), Operator(tok)) => EmitTwo(Self::sym(k), tok),
+                (Symbol(k), SymbolStart)   => Next(   Symbol(Self::push(k, c))),
+                (Symbol(k), SymbolChar)    => Next(   Symbol(Self::push(k, c))),
+
+                (NodeId(k), Whitespace)    => EmitOne(Self::id(k),       Start),
+                (NodeId(k), Operator(tok)) => EmitTwo(Self::id(k), tok),
+                (NodeId(k), SymbolStart)   => Next(   NodeId(Self::push(k, c))),
+                (NodeId(k), SymbolChar)    => Next(   NodeId(Self::push(k, c))),
+            }
+        }
+    }
+
+    impl<Id, Val, I> Iterator for SimpleLexer<Id, Val, I>
+    where Id: From<String>,
+          Val: From<String>,
+          I: Iterator<Item=char>
+    {
+        type Item=Token<Id, Val>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            /*
+            if let State::Pending(tok) = self.1 {
+                self.1 = State::start;
+                return Some(tok);
+            }*/
+
+            while let Some(character) = self.0.next() {
+                match self.lex(character) {
+                    Action::Next(s)         => {self.1 = s;},
+                    Action::EmitOne(t, s)   => {self.1 = s; return Some(t);},
+                    Action::EmitTwo(t1, t2) => {self.1 = State::Start /* Pending(t2)*/; return Some(t1);},
+                    Action::Unexpected(c)   => {panic!("unexpected input {:?}");}
+                }
+            }
+            return None
+        }
+    }
 }
