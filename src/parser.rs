@@ -66,6 +66,7 @@ use crate::grs::Types;
  * implementation, so it could be way off.
  */
 
+#[derive(Debug, PartialEq)]
 pub enum Token<Id, Val> {
     ArrowShaft,
     ArrowTip,
@@ -78,6 +79,7 @@ pub enum Token<Id, Val> {
     Empty,
     Redirect
 }
+
 
 // XXX: when the last rule is implemented and tested, delete this
 // comment.
@@ -160,9 +162,25 @@ pub fn parse_empty_node<Id, Val>(input: impl Iterator<Item=Token<Id, Val>>) -> I
 
 
 mod lexer {
+    /**
+     * Ad-hoc lexer for this ad-hoc parser.
+     *
+     * I would use a crate to provide a higher-level abstraction, but
+     * that breaks my rule for this project that it have no external
+     * dependencies. Not even `regex`. I want to fight this trend of
+     * one single-purpose crate pulling in dozens of transitive
+     * dependencies.
+     *
+     * As the main purpose of the parser is to suppor the unit tests,
+     * and the whole grammar is very simple, I decided to write it by
+     * hand.
+     */
     use super::Token;
     use core::marker::PhantomData;
+    use core::str::FromStr;
+    use core::fmt::Debug;
 
+    #[derive(Debug)]
     enum State {
         Start,
         Symbol(String),
@@ -177,6 +195,7 @@ mod lexer {
         Unexpected(char)
     }
 
+    #[derive(Debug)]
     enum CharType<Id, Val> {
         Whitespace,
         Operator(Token<Id, Val>),
@@ -191,9 +210,11 @@ mod lexer {
     ) where I: Iterator<Item=char>;
 
     impl<Id, Val, I> SimpleLexer<Id, Val, I>
-    where Id: From<String>,
-          Val: From<String>,
-          I: Iterator<Item=char>
+    where Id: FromStr + Debug,
+          Val: FromStr + Debug,
+          I: Iterator<Item=char>,
+          <Val as FromStr>::Err: Debug,
+          <Id as FromStr>::Err: Debug
     {
         pub fn new(input: I) -> Self {
             SimpleLexer(input, State::Start, PhantomData)
@@ -206,11 +227,11 @@ mod lexer {
         }
 
         fn sym(s: String) -> Token<Id, Val> {
-            Token::Symbol(Val::from(s))
+            Token::Symbol(Val::from_str(&s).unwrap())
         }
 
         fn id(s: String) -> Token<Id, Val> {
-            Token::NodeId(Id::from(s))
+            Token::NodeId(Id::from_str(&s).unwrap())
         }
 
         fn pushs(s: String, c: char) -> State {
@@ -233,7 +254,7 @@ mod lexer {
             ':'                     => CharType::Operator(Token::Colon),
             '_'                     => CharType::Operator(Token::Empty),
             '='                     => CharType::Operator(Token::Redirect),
-            'x' if c.is_uppercase() => CharType::SymbolStart,
+             _  if c.is_uppercase() => CharType::SymbolStart,
              _                      => CharType::SymbolChar
         } }
 
@@ -242,12 +263,14 @@ mod lexer {
             use CharType::*;
             use State::*;
             use core::mem::replace;
+            //println!("{:?} {:?} {:?}", c, self.1, Self::classify(c));
+            
             // use Self::*;
             match (replace(&mut self.1, State::Start), Self::classify(c)) {
                 (Start,     Whitespace)    => Next(                      Start),
                 (Start,     Operator(tok)) => EmitOne(tok,               Start),
-                (Start,     SymbolStart)   => Next(      Symbol(String::new())),
-                (Start,     SymbolChar)    => Next(      NodeId(String::new())),
+                (Start,     SymbolStart)   => Next(    Symbol(String::from(c))),
+                (Start,     SymbolChar)    => Next(    NodeId(String::from(c))),
 
                 (Symbol(k), Whitespace)    => EmitOne(Self::sym(k),      Start),
                 (Symbol(k), Operator(tok)) => EmitTwo(Self::sym(k), tok),
@@ -263,9 +286,11 @@ mod lexer {
     }
 
     impl<Id, Val, I> Iterator for SimpleLexer<Id, Val, I>
-    where Id: From<String>,
-          Val: From<String>,
-          I: Iterator<Item=char>
+    where Id: FromStr + Debug,
+          Val: FromStr + Debug,
+          I: Iterator<Item=char>,
+          <Val as FromStr>::Err: Debug,
+          <Id as FromStr>::Err: Debug
     {
         type Item=Token<Id, Val>;
 
@@ -286,5 +311,38 @@ mod lexer {
             }
             return None
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::parser::Token;
+    use crate::parser::lexer::*;
+    use crate::parser::*;
+
+    fn lex(s: &str) -> Vec<Token<usize, String>> {
+        let s = s.chars();
+        SimpleLexer::new(s).collect()
+    }
+
+    #[test]
+    fn test_lexer() {
+        assert_eq!(vec![Token::<usize, String>::NodeId(1234)], vec![Token::NodeId(1234)]);
+        assert_eq!(
+            lex("1234 Bar (Baz) = : -> ->"),
+            vec![
+                Token::NodeId(1234 as usize),
+                Token::Symbol("Bar".into()),
+                Token::Open,
+                Token::Symbol("Baz".into()),
+                Token::Redirect,
+                Token::Colon,
+                Token::ArrowShaft,
+                Token::ArrowTip,
+                Token::ArrowShaft,
+                Token::ArrowTip
+            ]
+        );
     }
 }
